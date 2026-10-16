@@ -506,6 +506,11 @@ mark{background:color-mix(in srgb, var(--hi) 30%, transparent);color:inherit;bor
 .tabs.compact .tab{padding:11px 0;gap:0}
 .tabs.compact .tab .tlab{max-height:0;opacity:0}
 .tabs.compact .tab svg{width:25px;height:25px}
+/* Nummernkreise */
+#nrPrev{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:13.5px}
+#nrPrev i{font-style:normal;color:var(--muted)}
+#nrPrev b{font-weight:700}
+#cPreJob,#cPreRe,#cPreAn,#cPreKv{text-transform:uppercase}
 /* selection */
 body:has(.selbar) .toast{bottom:calc(168px + env(safe-area-inset-bottom,0px))}
 .view:has(.selbar){padding-bottom:72px}
