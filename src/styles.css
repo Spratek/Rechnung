@@ -251,6 +251,15 @@ main{max-width:720px;margin:0 auto;padding:16px 16px 140px}
 textarea.input{resize:vertical;line-height:1.45}
 .lineform{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .lineform input:not(.toggle){max-width:170px;text-align:right}
+.lineform .tl{font-weight:600;display:block}
+.lineform .tsub{display:block;font-size:12.5px;color:var(--muted);margin-top:2px;transition:color .2s}
+.lineform[hidden]{display:none}
+.lineform.off span{color:var(--muted)}
+.lineform input:disabled{opacity:.55;background:var(--grey-soft);cursor:not-allowed}
+.kuhint{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:12px;background:var(--blue-soft);border:1px solid color-mix(in srgb,var(--blue) 25%,transparent);font-size:13px;line-height:1.45}
+.kuhint[hidden]{display:none}
+.kuhint svg{width:18px;height:18px;flex:none;margin-top:1px;color:var(--blue)}
+.kuhint i{font-style:normal;color:var(--muted)}
 .linkbtn{background:none;border:0;color:var(--link);font-weight:600;padding:4px 0;display:inline-flex;align-items:center;gap:6px;text-align:left}
 .linkbtn svg{width:18px;height:18px}
 
