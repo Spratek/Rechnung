@@ -84,7 +84,17 @@ main{max-width:720px;margin:0 auto;padding:16px 16px 140px}
 .daylabel{font-weight:600;color:var(--muted);font-size:13px;letter-spacing:.06em;text-transform:uppercase;margin:6px 4px -4px}
 
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;display:flex;flex-direction:column;gap:6px;text-align:left;width:100%;min-width:0}
-button.card:active{transform:scale(.99)}
+/* Micro-Interactions: leichtes Eindrücken beim Tippen */
+.btn,.card,.chip,.day,.step,.sw,.lay,.opt,.srow,.seg button,.navbtn,.iconbtn,.hbtn,.fab{transition:transform .16s cubic-bezier(.2,.8,.2,1),background-color .2s ease,color .2s ease,border-color .2s ease,box-shadow .2s ease}
+.btn:not(:disabled):active,button.card:active,.chip:active,.day:active,.step:active,.sw:active,.lay:active,.opt:active,.srow:active,.seg button:active,.navbtn:active,.iconbtn:active,.hbtn:not(:disabled):active{transform:scale(.97)}
+.fab:active{transform:scale(.92)}
+.day{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:manipulation}
+.day.pressing{transform:scale(.9);transition:transform .5s cubic-bezier(.2,.8,.2,1),background-color .5s;background:color-mix(in srgb, var(--hi) 16%, transparent)}
+.day.lp-done{animation:lpPop .32s cubic-bezier(.3,1.5,.5,1)}
+@keyframes lpPop{0%{transform:scale(.9)}60%{transform:scale(1.06)}100%{transform:scale(1)}}
+.btn.wa{background:#1fa855;color:#fff}
+.btn.wa svg{width:19px;height:19px}
+.btn[aria-disabled="true"]{opacity:.5;pointer-events:none}
 .card .row{display:flex;justify-content:space-between;align-items:center;gap:10px}
 .card h3{margin:0;font-size:17px;font-weight:700;min-width:0;overflow-wrap:anywhere}
 .card h4{margin:0;font-size:17px;font-weight:700;display:flex;align-items:center;gap:10px}
@@ -95,6 +105,11 @@ button.card:active{transform:scale(.99)}
 .jobnr{color:var(--faint)}
 
 .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:3px 10px;font-size:12.5px;font-weight:700;white-space:nowrap}
+/* Abholbereit: sanft pulsieren, damit wartende Abholungen auffallen */
+.pill.s-fertig{animation:fertigGlow 2.4s ease-out infinite}
+.pill.s-fertig::before{animation:fertigDot 2.4s ease-in-out infinite}
+@keyframes fertigGlow{0%{box-shadow:0 0 0 0 color-mix(in srgb, var(--green) 45%, transparent)}70%{box-shadow:0 0 0 7px color-mix(in srgb, var(--green) 0%, transparent)}100%{box-shadow:0 0 0 0 transparent}}
+@keyframes fertigDot{0%,100%{opacity:1}50%{opacity:.35}}
 .pill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
 .s-angenommen{background:var(--blue-soft);color:var(--blue)}
 .s-reparatur{background:var(--amber-soft);color:var(--amber)}
@@ -548,7 +563,7 @@ body:has(.selbar) .toast{bottom:calc(168px + env(safe-area-inset-bottom,0px))}
 .tab-pill{position:absolute;z-index:0;top:var(--tp);height:calc(100% - 2 * var(--tp));width:calc((100% - 2 * var(--tp)) / 5);left:calc(var(--tp) + var(--i) * (100% - 2 * var(--tp)) / 5);border-radius:20px;background:rgba(255,255,255,.07);transition:left .42s cubic-bezier(.34,1.36,.5,1),top .3s ease,height .3s ease;pointer-events:none}
 .tab-pill::before{content:"";position:absolute;left:50%;top:calc(-1 * var(--tp));width:28px;height:3px;margin-left:-14px;border-radius:0 0 3px 3px;background:var(--tab-on);transition:background .25s ease,top .3s ease}
 #viewTitle{display:inline-block}
-@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}.pill.s-fertig,.pill.s-fertig::before{animation:none}}
 @media (max-width:380px){.field label{min-width:90px}.tab{font-size:10.5px}.big{font-size:34px}.layouts{grid-template-columns:repeat(2,minmax(0,1fr))}.top h1{font-size:18px}}
 
 /* ---------- iPhone-App (Home-Bildschirm) ---------- */
