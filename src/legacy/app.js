@@ -81,6 +81,7 @@ export function startApp(){
     sync:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 11a8 8 0 0 0-14.3-4.6L4 8M4 13a8 8 0 0 0 14.3 4.6L20 16"/><path d="M4 4v4h4M20 20v-4h-4"/></svg>',
     plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
     copy:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>',
+    cam:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
     upl:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 15V4M7 9l5-5 5 5M5 20h14"/></svg>',
     dl:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
     text:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 10h16M4 14h10M4 18h7"/></svg>',
@@ -120,11 +121,11 @@ export function startApp(){
   };
 
   /* ---------- data store (private db, local fallback) ---------- */
-  const COLLS = ["kunden","auftraege","rechnungen","teile"];
-  const S = { firma:{}, kunden:[], auftraege:[], rechnungen:[], teile:[] };
+  const COLLS = ["kunden","auftraege","rechnungen","teile","ausgaben"];
+  const S = { firma:{}, kunden:[], auftraege:[], rechnungen:[], teile:[], ausgaben:[] };
   let mode = "local", dbRefs = null;
   const LS_KEY = "repairmobile-werkbank-v1";
-  function lsLoad(){ try{ const raw=localStorage.getItem(LS_KEY); if(raw) Object.assign(S, JSON.parse(raw)); }catch(e){} }
+  function lsLoad(){ try{ const raw=localStorage.getItem(LS_KEY); if(raw) Object.assign(S, JSON.parse(raw)); }catch(e){} for(const c of COLLS) if(!Array.isArray(S[c])) S[c]=[]; }
   function lsSave(){ if(mode!=="local") return; try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){} }
   function upsertLocal(coll, obj){ const arr=S[coll]; const i=arr.findIndex(x=>x.id===obj.id); if(i>=0) arr[i]=obj; else arr.push(obj); }
   async function save(coll, obj){
@@ -148,7 +149,7 @@ export function startApp(){
       const id = await user.id(); if(!id) return;
       const base = db.doc(`data/users/${id}/app`);
       const refs = { firma: db.doc(`data/users/${id}/firma`) };
-      COLLS.forEach(c => refs[c] = base.collection(c));
+      COLLS.forEach(c => refs[c] = base.collection(c)); refs.bilder = base.collection("belegbilder");
       const fsnap = await refs.firma.get();
       const local = JSON.parse(JSON.stringify(S));
       dbRefs = refs; mode = "db";
@@ -222,7 +223,7 @@ export function startApp(){
   const defaultNote = typ => (typ==="rechnung" ? S.firma.textRechnung : S.firma.textAngebot) || "";
 
   /* ---------- UI state ---------- */
-  const UI = { sel:null, selVis:{kunden:[],teile:[],rechnungen:[]}, view:"auftraege", filter:"offen", q:"", calMonth:today().slice(0,7), calDay:today(), docSeg:"rechnungen", docFilter:"alle", csvYear:String(new Date().getFullYear()), csvMonth:"" };
+  const UI = { sel:null, selVis:{kunden:[],teile:[],rechnungen:[]}, view:"auftraege", filter:"offen", q:"", calMonth:today().slice(0,7), calDay:today(), docSeg:"rechnungen", docFilter:"alle", ausMonth:today().slice(0,7), csvYear:String(new Date().getFullYear()), csvMonth:"" };
   const titles = {auftraege:"Aufträge", kalender:"Kalender", rechnungen:"Rechnungen", kunden:"Kunden", mehr:"Einstellungen"};
   const TAB_ORDER=["auftraege","kalender","rechnungen","kunden","mehr"];
   const reducedMotion = () => { try{ return matchMedia("(prefers-reduced-motion: reduce)").matches; }catch(e){ return false; } };
@@ -251,17 +252,17 @@ export function startApp(){
   }
   $("#tabs").addEventListener("click", e => { const b=e.target.closest(".tab"); if(!b) return; switchView(b.dataset.v); });
   $("#fab").addEventListener("click", () => {
-    if(UI.view==="kunden") openKunde(); else if(UI.view==="rechnungen") openDocEditor({typ: UI.docSeg==="angebote"?"angebot":"rechnung"});
+    if(UI.view==="kunden") openKunde(); else if(UI.view==="rechnungen" && UI.docSeg==="ausgaben") newAusgabe(); else if(UI.view==="rechnungen") openDocEditor({typ: UI.docSeg==="angebote"?"angebot":"rechnung"});
     else if(UI.view==="mehr") openTeil(); else openAuftrag(null, UI.view==="kalender" ? UI.calDay : null);
   });
 
   /* ---------- render ---------- */
   function render(){
     applyBranding();
-    $("#viewTitle").textContent = titles[UI.view];
+    $("#viewTitle").textContent = UI.view==="rechnungen" && UI.docSeg==="ausgaben" ? "Ausgaben" : titles[UI.view];
     setActiveTab(UI.view);
     $("#fab").hidden = !!UI.sel;
-    $("#fab").setAttribute("aria-label", {auftraege:"Neuer Auftrag",kalender:"Neuer Termin",rechnungen:"Neues Dokument",kunden:"Neuer Kunde",mehr:"Neues Ersatzteil"}[UI.view]);
+    $("#fab").setAttribute("aria-label", {auftraege:"Neuer Auftrag",kalender:"Neuer Termin",rechnungen:UI.docSeg==="ausgaben"?"Beleg erfassen":"Neues Dokument",kunden:"Neuer Kunde",mehr:"Neues Ersatzteil"}[UI.view]);
     const m = $("#main"); const keep = document.activeElement?.id; const sel = keep && document.activeElement.selectionStart;
     m.innerHTML = `<div class="view">${({auftraege:vAuftraege,kalender:vKalender,rechnungen:vRechnungen,kunden:vKunden,mehr:vMehr})[UI.view]()}</div>`;
     if(UI.enterDir){ const d=UI.enterDir; UI.enterDir=0; animateEnter($("#main .view"), d); }
@@ -348,6 +349,8 @@ export function startApp(){
   }
   function vRechnungen(){
     const isR = UI.docSeg==="rechnungen";
+    const seg = `<div class="seg seg3"><button data-seg="rechnungen" aria-pressed="${isR}">Rechnungen</button><button data-seg="angebote" aria-pressed="${UI.docSeg==="angebote"}">Angebote &amp; KVA</button><button data-seg="ausgaben" aria-pressed="${UI.docSeg==="ausgaben"}">Ausgaben</button></div>`;
+    if(UI.docSeg==="ausgaben") return vAusgaben(seg);
     const all = S.rechnungen.filter(r => isR ? dTyp(r)==="rechnung" : dTyp(r)!=="rechnung").sort((a,b)=>(b.datum||"").localeCompare(a.datum||"") || (b.nr||"").localeCompare(a.nr||""));
     const F = isR
       ? {alle:()=>true, entwurf:r=>dStatus(r)==="entwurf", offen:r=>["offen","versendet","ueberfaellig"].includes(dStatus(r)), bezahlt:r=>dStatus(r)==="bezahlt", storniert:r=>dStatus(r)==="storniert"}
@@ -359,7 +362,6 @@ export function startApp(){
     const tri = isR
       ? `<div class="tri"><div><small>Offen</small><b class="c-blue">${eur(sumOf(r=>["offen","versendet","ueberfaellig"].includes(dStatus(r))))}</b></div><div><small>Überfällig</small><b class="c-red">${eur(sumOf(r=>dStatus(r)==="ueberfaellig"))}</b></div><div><small>Bezahlt</small><b class="c-green">${eur(sumOf(r=>dStatus(r)==="bezahlt"))}</b></div></div>`
       : `<div class="tri"><div><small>Offen</small><b class="c-blue">${eur(sumOf(r=>["offen","versendet"].includes(dStatus(r))))}</b></div><div><small>Angenommen</small><b class="c-green">${eur(sumOf(r=>dStatus(r)==="akzeptiert"))}</b></div><div><small>Entwürfe</small><b>${all.filter(r=>dStatus(r)==="entwurf").length}</b></div></div>`;
-    const seg = `<div class="seg" style="max-width:380px;align-self:center;width:100%"><button data-seg="rechnungen" aria-pressed="${isR}">Rechnungen</button><button data-seg="angebote" aria-pressed="${!isR}">Angebote &amp; KVA</button></div>`;
     if(!all.length) return `${seg}${isR?hintHtml("rechnungen","<b>Rechnungen</b> erstellen Sie mit dem + oder direkt aus einem Auftrag. Firmendaten und Bankverbindung tragen Sie unter Einstellungen ein."):""}
       <div class="empty">${bigIcon()}<h2>${isR?"Noch keine Rechnungen":"Noch keine Angebote"}</h2><p>${isR?"Tippen Sie auf +, wählen Sie Kunde und Positionen, und sehen Sie sich das Blatt vor dem Erstellen in der Vorschau an.":"Angebote und Kostenvoranschläge erstellen Sie mit dem +. Wird ein Angebot angenommen, machen Sie mit einem Tipp eine Rechnung daraus."}</p>
       <div class="btnrow" style="justify-content:center"><button class="btn accent" data-act="newdoc">+ ${isR?"Rechnung":"Angebot"} erstellen</button>${isR?`<button class="btn ghost" data-act="importDocs">${ico.upl} Rechnungen importieren</button>`:""}</div></div>`;
@@ -401,8 +403,8 @@ export function startApp(){
     const theme=getTheme(), akz=ACCENTS[f.akzent]?f.akzent:"repair", lay=pdfLayout();
     const texteSet=["textRechnung","textAngebot","haftung"].filter(k=>(f[k]||"").trim()).length;
     const invs=S.rechnungen.filter(r=>dTyp(r)==="rechnung" && r.nr && dStatus(r)!=="entwurf");
-    const years=[...new Set([String(new Date().getFullYear()), ...invs.map(r=>(r.datum||"").slice(0,4)).filter(Boolean)])].sort().reverse();
-    const csvCount=csvRows().length;
+    const years=[...new Set([String(new Date().getFullYear()), ...invs.map(r=>(r.datum||"").slice(0,4)).filter(Boolean), ...S.ausgaben.map(x=>(x.datum||"").slice(0,4)).filter(Boolean)])].sort().reverse();
+    const csvCount=csvRows().length, ausCount=ausRowsFor(UI.csvYear + (UI.csvMonth ? "-"+UI.csvMonth : "")).length;
     return `<div class="group"><span class="glabel">Firma &amp; Rechnung</span>
       <button class="card" data-act="firma"><div class="row"><h3>Firmendaten, Bank, Logo</h3><span class="pill ${filled===5?"s-bezahlt":"s-versendet"}">${filled===5?"Vollständig":filled+" von 5"}</span></div>
       <div class="meta">${f.name?esc(f.name)+(f.ort?" · "+esc(f.ort):""):"Erscheinen im Kopf und Fuß jeder Rechnung."}</div>
@@ -431,17 +433,19 @@ export function startApp(){
       <div class="btnrow"><button class="btn ghost" data-act="newteil">+ Produkt anlegen</button>${teile.length?"":`<button class="btn ghost" data-act="importTeile">${ico.upl} Produkte importieren</button>`}</div></div>
 
       <div class="group" id="grpBackup"><span class="glabel">Datensicherung &amp; Backup</span>
-        <div class="card"><span style="color:var(--muted)">Sichert Firmendaten, Kunden, Aufträge, Rechnungen, Angebote und Ersatzteile in einer Datei. Am besten regelmäßig herunterladen und z. B. in iCloud Drive ablegen.</span>
+        <div class="card"><span style="color:var(--muted)">Sichert Firmendaten, Kunden, Aufträge, Rechnungen, Angebote, Ersatzteile und Ausgaben samt Belegfotos in einer Datei. Am besten regelmäßig herunterladen und z. B. in iCloud Drive ablegen.</span>
           <div class="btnrow"><button class="btn" data-act="backupExport">${ico.dl}Backup herunterladen</button><button class="btn ghost" data-act="backupImport">Backup wiederherstellen</button></div>
           <input type="file" id="backupFile" accept="application/json,.json" hidden>
-          ${UI.pendingImport?`<div class="confirm"><span><b>Backup vom ${esc(deStamp(UI.pendingImport.exportiert)||"unbekannten Datum")} wiederherstellen?</b><br>${UI.pendingImport.kunden.length} Kunden, ${UI.pendingImport.auftraege.length} Aufträge, ${UI.pendingImport.rechnungen.length} Rechnungen/Angebote, ${UI.pendingImport.teile.length} Ersatzteile. Ihre aktuellen Daten werden dabei vollständig ersetzt.</span>
+          ${UI.pendingImport?`<div class="confirm"><span><b>Backup vom ${esc(deStamp(UI.pendingImport.exportiert)||"unbekannten Datum")} wiederherstellen?</b><br>${UI.pendingImport.kunden.length} Kunden, ${UI.pendingImport.auftraege.length} Aufträge, ${UI.pendingImport.rechnungen.length} Rechnungen/Angebote, ${UI.pendingImport.teile.length} Ersatzteile, ${UI.pendingImport.ausgaben.length} Ausgaben. Ihre aktuellen Daten werden dabei vollständig ersetzt.</span>
             <div class="btnrow"><button class="btn danger" data-act="backupApply">Ja, wiederherstellen</button><button class="btn ghost" data-act="backupCancel">Abbrechen</button></div></div>`:""}
         </div>
         <div class="card"><h4>${ico.table}Buchhaltung (CSV-Export)</h4>
-          <span style="color:var(--muted)">Alle erstellten Rechnungen eines Zeitraums als Tabelle für den Steuerberater, mit Netto, MwSt. und Brutto. Öffnet sich in Excel, Numbers und DATEV-Importen.</span>
+          <span style="color:var(--muted)">Rechnungen und Ausgaben eines Zeitraums als Tabellen für den Steuerberater. Öffnet sich in Excel, Numbers und DATEV-Importen.</span>
           <div class="csvrow"><select id="csvYear" class="input" aria-label="Jahr">${years.map(y=>`<option ${UI.csvYear===y?"selected":""}>${y}</option>`).join("")}</select>
             <select id="csvMonth" class="input" aria-label="Monat"><option value="">Ganzes Jahr</option>${MONTHS.map((n,i)=>`<option value="${pad(i+1)}" ${UI.csvMonth===pad(i+1)?"selected":""}>${n}</option>`).join("")}</select></div>
-          <div class="row"><span style="color:var(--muted)">${csvCount} Rechnung${csvCount===1?"":"en"} im Zeitraum</span><button class="btn" data-act="csvExport" ${csvCount?"":"disabled style='opacity:.5'"}>${ico.dl}CSV exportieren</button></div>
+          <div class="exrow"><span><b>Rechnungen</b><small>${csvCount} im Zeitraum · Netto, MwSt., Brutto</small></span><button class="btn sm" data-act="csvExport" ${csvCount?"":"disabled"}>${ico.dl}CSV</button></div>
+          <div class="exrow"><span><b>Ausgaben</b><small>${ausCount} im Zeitraum · Netto, Vorsteuer, Brutto</small></span><button class="btn sm" data-act="csvAus" ${ausCount?"":"disabled"}>${ico.dl}CSV</button></div>
+          <div class="exrow"><span><b>Komplettpaket (ZIP)</b><small>Beide Tabellen plus alle Belegfotos und PDFs</small></span><button class="btn sm accent" data-act="paket" ${csvCount||ausCount?"":"disabled"}>${ico.dl}ZIP</button></div>
         </div></div>
       <p class="syncnote">${mode==="db"?"Gespeichert in Ihrem Konto – privat, auf allen Geräten gleich.":"Gespeichert in diesem Browser."}</p>`;
   }
@@ -474,6 +478,8 @@ export function startApp(){
       if(t.dataset.pick && UI.sel){ const id=t.dataset.pick; UI.sel.ids.has(id) ? UI.sel.ids.delete(id) : UI.sel.ids.add(id); UI.sel.confirm=false; render(); return; }
       if(t.dataset.job) return openJobDetail(t.dataset.job);
       if(t.dataset.doc) return openDoc(t.dataset.doc);
+      if(t.dataset.aus) return openAusgabe(t.dataset.aus);
+      if(t.dataset.am!=null){ const d=+t.dataset.am; if(d===0) UI.ausMonth=today().slice(0,7); else { const [y,mo]=UI.ausMonth.split("-").map(Number); const n=new Date(y,mo-1+d,1); UI.ausMonth=`${n.getFullYear()}-${pad(n.getMonth()+1)}`; } render(); return; }
       if(t.dataset.kunde) return openKunde(t.dataset.kunde);
       if(t.dataset.teil) return openTeil(t.dataset.teil);
       if(t.dataset.day){ UI.calDay=t.dataset.day; render(); return; }
@@ -499,11 +505,15 @@ export function startApp(){
       if(a==="exportKunden") exportMenu("kunden"); if(a==="exportTeile") exportMenu("teile");
       if(a==="pdfsample") openViewer(sampleDoc(), `<b>Beispiel-Blatt · ${LAYOUTS[pdfLayout()].l}</b><span>So sehen Ihre Belege mit den aktuellen Einstellungen aus.</span>`);
       if(a==="csvExport") exportCsv();
+      if(a==="newAus") newAusgabe(); if(a==="ausExport") ausExportMenu();
+      if(a==="csvAus") exportAusCsv(UI.csvYear + (UI.csvMonth ? "-"+UI.csvMonth : ""));
+      if(a==="paket") exportPaket(UI.csvYear + (UI.csvMonth ? "-"+UI.csvMonth : ""), true);
       if(a==="backupExport") exportBackup();
       if(a==="backupImport") $("#backupFile").click();
       if(a==="backupApply") applyBackup(UI.pendingImport);
       if(a==="backupCancel"){ UI.pendingImport=null; render(); }
     };
+    fillThumbs(m);
     const q=$("#q"); if(q) q.oninput = () => { UI.q=q.value; render(); };
     const bf=$("#backupFile"); if(bf) bf.onchange = importBackup;
     const st=$("#setStempel"); if(st) st.onchange = () => { setFirma({stempel:st.checked}); toast(st.checked?"„BEZAHLT“-Stempel an":"„BEZAHLT“-Stempel aus"); };
@@ -661,6 +671,7 @@ export function startApp(){
         ${(a.positionen||[]).map(p=>`<div class="kv"><span style="color:var(--fg)">${numIn(p.menge)} ${esc(p.einheit||"Stk.")} · ${esc(p.bez)}</span><span class="num">${eur(p.menge*p.preis)}</span></div>`).join("") || `<div class="kv"><span>Noch keine Positionen</span><span></span></div>`}
         <div class="total"><span>Summe</span><span class="num">${eur(sumPos(a.positionen))}</span></div></div></div>
       ${docs.length?`<div class="group"><span class="glabel">Dokumente zu diesem Auftrag</span>${docs.map(docCard).join("")}</div>`:""}
+      ${jobAusHtml(a)}
       ${msgButtons(a,k)}
       <div class="btnrow">
         <button class="btn" id="mkInv">${ico.doc} Rechnung erstellen</button>
@@ -673,6 +684,8 @@ export function startApp(){
     $("#mkInv").onclick=()=>openDocEditor({typ:"rechnung", auftragId:a.id});
     $("#mkKva").onclick=()=>openDocEditor({typ:"kva", auftragId:a.id});
     $$("#sBody [data-doc]").forEach(b=>b.onclick=()=>openDoc(b.dataset.doc));
+    $$("#sBody [data-aus]").forEach(b=>b.onclick=()=>openAusgabe(b.dataset.aus)); fillThumbs($("#sBody"));
+    $("#jobAus").onclick=()=>newAusgabe(a.id);
   }
 
   /* ---------- Dokument-Editor ---------- */
@@ -1398,6 +1411,237 @@ export function startApp(){
       <p class="help">„Hallo ${esc(k.name)}, Ihr ${esc((a.geraet||"Gerät").split(/\s[–-]\s/)[0])} ist fertig repariert …“</p></div>`;
   }
 
+  /* ---------- Ausgaben & Beleg-Scan (Eingangsrechnungen) ---------- */
+  const AKAT = ["Ersatzteile","Werkzeug","Porto/Versand","Verbrauchsmaterial","Büro & Software","Miete & Nebenkosten","Fahrzeug","Werbung","Sonstiges"];
+  const AKAT_C = {"Ersatzteile":"#29aae1","Werkzeug":"#e8912d","Porto/Versand":"#8b6fd6","Verbrauchsmaterial":"#2fa36b","Büro & Software":"#4a6fa5","Miete & Nebenkosten":"#c4507a","Fahrzeug":"#7a8a99","Werbung":"#d6b12f","Sonstiges":"#98a2ad"};
+  const SAETZE = [19,7,0];
+  const DB_IMG_MAX = 240000;   // Zeichen – passt sicher in ein Datenbank-Dokument
+  const aCalc = x => { const b=r2(+x.brutto||0), p=+x.satz||0; const n=p?r2(b/(1+p/100)):b; return {brutto:b, netto:n, vst:r2(b-n), p}; };
+  const ausIn = pre => S.ausgaben.filter(x=>(x.datum||"").startsWith(pre)).sort((a,b)=>(b.datum||"").localeCompare(a.datum||"") || (b.created||"").localeCompare(a.created||""));
+  const monthLabel = ym => MONTHS[+ym.slice(5,7)-1]+" "+ym.slice(0,4);
+  const kbTxt = n => n>1048576 ? (n/1048576).toFixed(1).replace(".",",")+" MB" : Math.max(1,Math.round(n/1024))+" KB";
+
+  /* Bildspeicher: IndexedDB auf dem Gerät + (wenn angemeldet) Kopie im Konto */
+  const BILD = {
+    _p:null,
+    open(){ if(this._p) return this._p; this._p=new Promise(res=>{ try{ const r=indexedDB.open("rm-belege",1); r.onupgradeneeded=()=>r.result.createObjectStore("b"); r.onsuccess=()=>res(r.result); r.onerror=()=>res(null); }catch(e){ res(null); } }); return this._p; },
+    async tx(mode, fn){ const db=await this.open(); if(!db) return null; return new Promise(res=>{ try{ const t=db.transaction("b",mode); const rq=fn(t.objectStore("b")); t.oncomplete=()=>res(rq?.result ?? null); t.onerror=t.onabort=()=>res(null); }catch(e){ res(null); } }); },
+    cache:new Map(),
+    async put(id, rec){ this.cache.set(id,rec); await this.tx("readwrite", s=>s.put(rec,id));
+      if(mode==="db" && dbRefs?.bilder && rec.data.length<=DB_IMG_MAX){ try{ await dbRefs.bilder.doc(id).set(rec); return true; }catch(e){ return false; } } return mode!=="db"; },
+    async get(id){ if(this.cache.has(id)) return this.cache.get(id);
+      let rec=await this.tx("readonly", s=>s.get(id));
+      if(!rec && mode==="db" && dbRefs?.bilder){ try{ const s=await dbRefs.bilder.doc(id).get(); if(s.exists){ rec=s.data(); this.tx("readwrite", st=>st.put(rec,id)); } }catch(e){} }
+      if(rec) this.cache.set(id,rec); return rec||null; },
+    async del(id){ this.cache.delete(id); await this.tx("readwrite", s=>s.delete(id)); if(mode==="db" && dbRefs?.bilder){ try{ await dbRefs.bilder.doc(id).delete(); }catch(e){} } }
+  };
+
+  async function compressImage(file){
+    const url=URL.createObjectURL(file);
+    try{
+      const img=await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=url; });
+      const c=document.createElement("canvas"), g=c.getContext("2d"); let max=1600, q=.82, out="";
+      for(let k=0;k<8;k++){
+        const sc=Math.min(1, max/Math.max(img.naturalWidth,img.naturalHeight));
+        c.width=Math.round(img.naturalWidth*sc); c.height=Math.round(img.naturalHeight*sc);
+        g.fillStyle="#fff"; g.fillRect(0,0,c.width,c.height); g.drawImage(img,0,0,c.width,c.height);
+        out=c.toDataURL("image/jpeg",q); if(out.length<=DB_IMG_MAX-2000) break;
+        if(q>.56) q-=.1; else max=Math.round(max*.8);
+      }
+      return out;
+    } finally { URL.revokeObjectURL(url); }
+  }
+  const readDataUrl = file => new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); });
+  async function fileToBeleg(file){
+    if(!file) return null;
+    const isPdf = file.type==="application/pdf" || /\.pdf$/i.test(file.name||"");
+    if(isPdf){ if(file.size>15*1048576){ toast("PDF ist zu groß (max. 15 MB)"); return null; } return { typ:"application/pdf", data:await readDataUrl(file), name:file.name||"Beleg.pdf", size:file.size }; }
+    if(!/^image\//.test(file.type||"") && !/\.(jpe?g|png|heic|heif|webp)$/i.test(file.name||"")){ toast("Bitte ein Foto oder eine PDF wählen"); return null; }
+    try{ const data=await compressImage(file); return { typ:"image/jpeg", data, name:(file.name||"Beleg").replace(/\.\w+$/,"")+".jpg", size:Math.round(data.length*.75) }; }
+    catch(e){ toast("Dieses Bildformat kann nicht gelesen werden"); return null; }
+  }
+
+  let belegCb=null;
+  function belegInputs(){
+    if($("#belegCam")) return;
+    document.body.insertAdjacentHTML("beforeend", `<input type="file" id="belegCam" accept="image/*" capture="environment" hidden><input type="file" id="belegFile" accept="image/*,application/pdf,.pdf" hidden>`);
+    for(const id of ["belegCam","belegFile"]) $("#"+id).onchange = async e => { const f=e.target.files?.[0]; e.target.value=""; if(!f || !belegCb) return; const cb=belegCb; belegCb=null;
+      toast(f.type==="application/pdf"?"PDF wird gelesen …":"Foto wird verkleinert …"); const b=await fileToBeleg(f); if(b) cb(b); };
+  }
+  function pickBeleg(cb, withoutOpt){
+    belegInputs();
+    const opts=[{label:"Foto aufnehmen", sub:"Kamera öffnen und Beleg abfotografieren", k:"cam"},{label:"Foto oder PDF auswählen", sub:"Aus Fotos, Dateien oder iCloud Drive", k:"file"}];
+    if(withoutOpt) opts.push({label:"Ohne Beleg erfassen", sub:"Nur Betrag und Lieferant eintragen", k:"none"});
+    openPicker("Beleg erfassen", opts, o => { if(o.k==="none") return cb(null); belegCb=cb; $(o.k==="cam"?"#belegCam":"#belegFile").click(); });
+  }
+  const newAusgabe = (auftragId="") => pickBeleg(b => openAusgabe(null, {beleg:b, auftragId}), true);
+
+  function belegPreviewHtml(b){
+    if(!b) return `<button type="button" class="bslot" id="aAdd">${ico.cam}<b>Beleg fotografieren oder hochladen</b><small>Foto oder PDF – optional</small></button>`;
+    const pdf=b.typ==="application/pdf";
+    return `<div class="bprev${pdf?" pdf":""}">${pdf?`<div class="bpdf">${ico.doc}<b>${esc(b.name||"Beleg.pdf")}</b><small>PDF · ${kbTxt(b.size||b.data.length*.75)}</small></div>`:`<img src="${b.data}" alt="Beleg-Foto" id="aImg">`}
+      <div class="bact"><button type="button" class="btn ghost sm" id="aOpen">${ico.preview} Ansehen</button><button type="button" class="btn ghost sm" id="aRep">${ico.cam} Ersetzen</button><button type="button" class="btn ghost sm" id="aDelB">Entfernen</button></div></div>`;
+  }
+  function showBeleg(b){
+    if(!b) return;
+    const ov=document.createElement("div"); ov.className="bfull";
+    if(b.typ==="application/pdf"){ const blob=dataUrlBlob(b.data); const u=URL.createObjectURL(blob);
+      ov.innerHTML=`<div class="bfbar"><b>${esc(b.name||"Beleg.pdf")}</b><a class="btn sm" href="${u}" target="_blank" rel="noopener" download="${esc(b.name||"Beleg.pdf")}">${ico.dl} Öffnen</a><button class="btn ghost sm" data-x>Schließen</button></div><iframe src="${u}" title="Beleg"></iframe>`;
+      ov._u=u; }
+    else ov.innerHTML=`<div class="bfbar"><b>Beleg</b><button class="btn ghost sm" data-x>Schließen</button></div><div class="bfimg"><img src="${b.data}" alt="Beleg"></div>`;
+    ov.onclick=e=>{ if(e.target.closest("[data-x]") || e.target===ov){ if(ov._u) setTimeout(()=>URL.revokeObjectURL(ov._u),1000); ov.remove(); } };
+    document.body.appendChild(ov);
+  }
+  function dataUrlBlob(d){ const [h,b64]=d.split(","); const typ=(h.match(/data:([^;]+)/)||[])[1]||"application/octet-stream"; const bin=atob(b64); const u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i); return new Blob([u],{type:typ}); }
+
+  function openAusgabe(id, opt={}){
+    const x = id ? S.ausgaben.find(a=>a.id===id) : null;
+    const lastKat = S.ausgaben.slice().sort((a,b)=>(b.created||"").localeCompare(a.created||""))[0]?.kategorie;
+    const d = x ? {...x} : { id:uid(), datum:today(), lieferant:"", belegNr:"", brutto:"", satz:19, kategorie:lastKat||"Ersatzteile", auftragId:opt.auftragId||"", notiz:"", created:nowStamp() };
+    let beleg = opt.beleg!==undefined ? opt.beleg : null, belegChanged = opt.beleg!==undefined;
+    const lief=[...new Set(S.ausgaben.map(a=>a.lieferant).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"de"));
+    const jobs=[...S.auftraege].sort((a,b)=>(b.created||"").localeCompare(a.created||""));
+    const jOpts=jobs.map(a=>`<option value="${a.id}" ${d.auftragId===a.id?"selected":""}>#${esc(a.nr)} · ${esc(a.geraet||"Gerät")}${a.kundeId?" · "+esc(kName(a.kundeId)):""}</option>`).join("");
+    openSheet(x?"Ausgabe":"Neue Ausgabe", `
+      <div id="aPrev">${belegPreviewHtml(beleg)}</div>
+      <div class="group"><span class="glabel">Beleg</span><div class="box">
+        <div class="field"><label for="aLief">Lieferant / Händler</label><input id="aLief" list="aLiefList" placeholder="z. B. Mobilesentrix" value="${esc(d.lieferant)}" autocomplete="off"></div>
+        <datalist id="aLiefList">${lief.map(l=>`<option value="${esc(l)}">`).join("")}</datalist>
+        <div class="field"><label for="aDatum">Datum</label><input id="aDatum" type="date" value="${d.datum}"></div>
+        <div class="field"><label for="aNr">Rechnungs-Nr.</label><input id="aNr" class="mono" placeholder="optional" value="${esc(d.belegNr)}"></div>
+        <div class="field"><label for="aBrutto">Bruttobetrag €</label><input id="aBrutto" class="num" inputmode="decimal" placeholder="0,00" value="${d.brutto!==""?numIn(d.brutto):""}"></div>
+      </div></div>
+      <div class="group"><span class="glabel">MwSt.-Satz auf dem Beleg</span>
+        <div class="seg" id="aSatz">${SAETZE.map(p=>`<button type="button" data-satz="${p}" aria-pressed="${+d.satz===p}">${p} %</button>`).join("")}</div>
+        <div class="asplit" id="aSplit"></div></div>
+      <div class="group"><span class="glabel">Zuordnung</span><div class="box">
+        <div class="field"><label for="aKat">Kategorie</label><select id="aKat">${AKAT.map(k=>`<option ${d.kategorie===k?"selected":""}>${k}</option>`).join("")}</select></div>
+        <div class="field"><label for="aJob">Auftrag</label><select id="aJob"><option value="">Kein Auftrag</option>${jOpts}</select></div>
+        <div class="field stack"><label for="aNotiz">Notiz</label><input id="aNotiz" placeholder="optional, z. B. Display für Kundengerät" value="${esc(d.notiz)}"></div>
+      </div>
+      <p class="help">Mit einem Auftrag verknüpft, erscheinen die Kosten im Auftrag unter „Material &amp; Einkäufe“.</p></div>
+      ${x?`<button class="btn danger" id="aDel">Ausgabe löschen</button><div id="delConfirm"></div>`:""}`,
+      () => {
+        const brutto=parseNum(val("aBrutto")), lieferant=val("aLief");
+        if(!lieferant){ toast("Bitte Lieferant / Händler eintragen"); $("#aLief").focus(); return false; }
+        if(!(brutto>0)){ toast("Bitte den Bruttobetrag eintragen"); $("#aBrutto").focus(); return false; }
+        const o={...d, lieferant, belegNr:val("aNr"), datum:val("aDatum")||today(), brutto:r2(brutto), satz:+d.satz, kategorie:val("aKat"), auftragId:val("aJob"), notiz:val("aNotiz")};
+        if(belegChanged){
+          if(beleg){ o.bild=true; o.bildTyp=beleg.typ; o.bildName=beleg.name; o.bildLokal = mode==="db" && beleg.data.length>DB_IMG_MAX; }
+          else { o.bild=false; delete o.bildTyp; delete o.bildName; delete o.bildLokal; }
+        }
+        save("ausgaben", o);
+        if(belegChanged){ if(beleg) BILD.put(o.id, beleg).then(ok=>{ if(!ok && mode==="db") toast("Beleg nur auf diesem Gerät gespeichert"); }); else if(x?.bild) BILD.del(o.id); }
+        UI.ausMonth=o.datum.slice(0,7);
+        toast(x?"Ausgabe gespeichert":`Ausgabe erfasst: ${eur(o.brutto)}`);
+      }, x?"Sichern":"Speichern");
+    const split=()=>{ const c=aCalc({brutto:parseNum(val("aBrutto")), satz:d.satz});
+      $("#aSplit").innerHTML = c.p ? `<span>Netto <b class="num">${eur(c.netto)}</b></span><span>${S.firma.kleinunternehmer?"darin MwSt.":"Vorsteuer"} <b class="num">${eur(c.vst)}</b></span>` : `<span>Ohne MwSt. – z. B. Porto, Privatverkauf, Kleinunternehmer</span>`; };
+    split(); $("#aBrutto").oninput=split;
+    $$("#aSatz [data-satz]").forEach(b=>b.onclick=()=>{ d.satz=+b.dataset.satz; $$("#aSatz [data-satz]").forEach(z=>z.setAttribute("aria-pressed", z===b)); split(); });
+    const bindPrev=()=>{
+      $("#aPrev").innerHTML=belegPreviewHtml(beleg);
+      const set=b=>{ beleg=b; belegChanged=true; bindPrev(); };
+      const add=$("#aAdd"); if(add) add.onclick=()=>pickBeleg(set);
+      const rep=$("#aRep"); if(rep) rep.onclick=()=>pickBeleg(set);
+      const op=$("#aOpen"); if(op) op.onclick=()=>showBeleg(beleg);
+      const im=$("#aImg"); if(im) im.onclick=()=>showBeleg(beleg);
+      const db=$("#aDelB"); if(db) db.onclick=()=>{ beleg=null; belegChanged=true; bindPrev(); };
+    };
+    bindPrev();
+    if(x?.bild && !belegChanged){ $("#aPrev").innerHTML=`<div class="bslot loading">${ico.doc}<small>Beleg wird geladen …</small></div>`;
+      BILD.get(x.id).then(b=>{ if(!$("#aPrev") || belegChanged) return; beleg=b; if(!b) $("#aPrev").innerHTML=`<div class="bslot">${ico.doc}<b>Beleg nicht auf diesem Gerät</b><small>${x.bildLokal?"Er wurde auf einem anderen Gerät erfasst (zu groß für die Synchronisierung).":"Er konnte nicht geladen werden."}</small></div>`; else bindPrev(); }); }
+    const del=$("#aDel"); if(del) del.onclick=()=>confirmBox(`Ausgabe von ${esc(x.lieferant)} über ${eur(x.brutto)} löschen?`, ()=>{ remove("ausgaben",x.id); if(x.bild) BILD.del(x.id); closeSheet(); toast("Ausgabe gelöscht"); });
+  }
+
+  function ausCard(x){
+    const c=aCalc(x), job=x.auftragId?S.auftraege.find(a=>a.id===x.auftragId):null;
+    return `<button class="card acard" data-aus="${x.id}">
+      <span class="athumb${x.bild?"":" none"}" ${x.bild?`data-thumb="${x.id}"`:""} style="--kc:${AKAT_C[x.kategorie]||"#98a2ad"}">${x.bild?(x.bildTyp==="application/pdf"?"PDF":""):ico.doc}</span>
+      <span class="abody"><span class="row"><h3>${esc(x.lieferant||"Ohne Lieferant")}</h3><strong class="num">${eur(c.brutto)}</strong></span>
+      <span class="meta"><span class="kdot" style="--kc:${AKAT_C[x.kategorie]||"#98a2ad"}">${esc(x.kategorie||"Sonstiges")}</span>${job?`<span class="mono jobnr">#${esc(job.nr)}</span>`:""}<span>${c.p} % MwSt.</span>${x.belegNr?`<span class="mono">${esc(x.belegNr)}</span>`:""}</span></span></button>`;
+  }
+  function vAusgaben(seg){
+    if(!UI.ausMonth) UI.ausMonth=today().slice(0,7);
+    const ym=UI.ausMonth, list=ausIn(ym);
+    const [y,m]=ym.split("-").map(Number); const pv=new Date(y,m-2,1), prev=`${pv.getFullYear()}-${pad(pv.getMonth()+1)}`;
+    const tot=list.reduce((s,x)=>{ const c=aCalc(x); s.b+=c.brutto; s.n+=c.netto; s.v+=c.vst; return s; },{b:0,n:0,v:0});
+    const prevSum=ausIn(prev).reduce((s,x)=>s+aCalc(x).brutto,0);
+    const diff = prevSum ? Math.round((tot.b-prevSum)/prevSum*100) : null;
+    const byKat=AKAT.map(k=>[k, list.filter(x=>(x.kategorie||"Sonstiges")===k).reduce((s,x)=>s+aCalc(x).brutto,0)]).filter(z=>z[1]>0).sort((a,b)=>b[1]-a[1]);
+    const jobSum=list.filter(x=>x.auftragId).reduce((s,x)=>s+aCalc(x).brutto,0);
+    const head=`<div class="calhead"><h2>${monthLabel(ym)}</h2><button class="navbtn" data-am="-1" aria-label="Voriger Monat">${ico.left}</button><button class="btn ghost sm" data-am="0">Heute</button><button class="navbtn" data-am="1" aria-label="Nächster Monat">${ico.right}</button></div>`;
+    const summary=`<div class="card asum">
+        <div class="row"><span class="lbl">Ausgaben ${MONTHS[m-1]}</span>${diff!=null?`<span class="adiff ${diff>0?"up":"down"}">${diff>0?"+":""}${diff} % zum Vormonat</span>`:""}</div>
+        <div class="abig num">${eur(tot.b)}</div>
+        <div class="asub"><span>Netto <b class="num">${eur(tot.n)}</b></span><span>${S.firma.kleinunternehmer?"darin MwSt.":"Vorsteuer"} <b class="num">${eur(tot.v)}</b></span><span>${list.length} Beleg${list.length===1?"":"e"}</span></div>
+        ${byKat.length?`<div class="kbar" role="img" aria-label="Ausgaben nach Kategorie">${byKat.map(([k,v])=>`<i style="flex:${v};background:${AKAT_C[k]}" title="${esc(k)}"></i>`).join("")}</div>
+        <div class="klist">${byKat.map(([k,v])=>`<div><span class="kdot" style="--kc:${AKAT_C[k]}">${esc(k)}</span><span class="num">${eur(v)}</span><small>${Math.round(v/tot.b*100)} %</small></div>`).join("")}</div>`:""}
+        ${jobSum?`<div class="meta" style="margin-top:2px">${ico.phone} ${eur(jobSum)} davon Aufträgen zugeordnet</div>`:""}
+      </div>`;
+    const actions=`<div class="btnrow"><button class="btn accent" data-act="newAus">${ico.cam} Beleg erfassen / scannen</button>${S.ausgaben.length?`<button class="btn ghost" data-act="ausExport">${ico.dl} Export ▾</button>`:""}</div>`;
+    if(!S.ausgaben.length) return `${seg}${hintHtml("ausgaben","<b>Ausgaben &amp; Einkäufe.</b> Fotografieren Sie Eingangsrechnungen und Quittungen direkt mit dem iPhone. Betrag, MwSt. und Kategorie tragen Sie kurz ein – fertig für den Steuerberater.")}
+      <div class="empty">${bigIcon()}<h2>Noch keine Ausgaben</h2><p>Tippen Sie auf „Beleg erfassen“, fotografieren Sie die Quittung oder wählen Sie eine PDF-Rechnung Ihres Lieferanten.</p>
+      <div class="btnrow" style="justify-content:center"><button class="btn accent" data-act="newAus">${ico.cam} Beleg erfassen / scannen</button></div></div>`;
+    let html=`${seg}${head}${summary}${actions}`, last=null;
+    if(!list.length) return html+`<div class="empty" style="padding:24px 16px"><p>Keine Ausgaben im ${MONTHS[m-1]}.</p></div>`;
+    for(const x of list){ if(x.datum!==last){ html+=`<div class="daylabel">${longDate(x.datum)}</div>`; last=x.datum; } html+=ausCard(x); }
+    return html;
+  }
+  function fillThumbs(root=document){
+    $$("[data-thumb]", root).forEach(async el=>{ if(el.dataset.done) return; el.dataset.done="1"; const id=el.dataset.thumb;
+      const r=S.ausgaben.find(a=>a.id===id); if(r?.bildTyp==="application/pdf") return;
+      const b=await BILD.get(id); if(b && b.typ!=="application/pdf"){ el.style.backgroundImage=`url("${b.data}")`; el.classList.add("img"); } else if(!b){ el.classList.add("none"); el.innerHTML=ico.doc; } });
+  }
+
+  /* Ausgaben im Auftrag */
+  function jobAusHtml(a){
+    const list=S.ausgaben.filter(x=>x.auftragId===a.id); const sum=list.reduce((s,x)=>s+aCalc(x).brutto,0), erl=sumPos(a.positionen);
+    return `<div class="group"><span class="glabel">Material &amp; Einkäufe</span>
+      ${list.map(ausCard).join("")}
+      ${list.length?`<div class="box"><div class="kv"><span>Einkauf gesamt</span><span class="num">${eur(sum)}</span></div>${erl?`<div class="kv"><span>Rohertrag (Positionen − Einkauf)</span><span class="num ${erl-sum<0?"c-red":"c-green"}">${eur(erl-sum)}</span></div>`:""}</div>`:""}
+      <button class="btn ghost" id="jobAus">${ico.cam} Einkauf / Beleg zuordnen</button></div>`;
+  }
+
+  /* Export */
+  function ausCsvText(rows){
+    const cell=v=>{ const s=String(v??""); return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s; };
+    const head=["Datum","Lieferant","Rechnungs-Nr.","Kategorie","Netto (EUR)","MwSt-Satz (%)","Vorsteuer (EUR)","Brutto (EUR)","Auftrag","Notiz","Beleg-Datei"];
+    const lines=[head, ...rows.map(x=>{ const c=aCalc(x), j=x.auftragId?S.auftraege.find(a=>a.id===x.auftragId):null;
+      return [deDate(x.datum), x.lieferant, x.belegNr||"", x.kategorie||"", num2(c.netto), num2(c.p), num2(c.vst), num2(c.brutto), j?j.nr:"", x.notiz||"", x.bild?belegFileName(x):""]; })];
+    const t=rows.reduce((s,x)=>{ const c=aCalc(x); s.n+=c.netto; s.v+=c.vst; s.b+=c.brutto; return s; },{n:0,v:0,b:0});
+    lines.push(["Summe","","","",num2(t.n),"",num2(t.v),num2(t.b),"","",""]);
+    return "﻿"+lines.map(l=>l.map(cell).join(";")).join("\r\n")+"\r\n";
+  }
+  function belegFileName(x){ const ext=x.bildTyp==="application/pdf"?"pdf":"jpg"; return `${x.datum}_${safeName(x.lieferant).slice(0,40)}_${num2(x.brutto)}_${x.id.slice(-4)}.${ext}`; }
+  const ausRowsFor = pre => S.ausgaben.filter(x=>(x.datum||"").startsWith(pre)).sort((a,b)=>(a.datum||"").localeCompare(b.datum||""));
+  function exportAusCsv(pre){
+    const rows=ausRowsFor(pre); if(!rows.length){ toast("Keine Ausgaben in diesem Zeitraum"); return; }
+    saveFile(`repairmobile-ausgaben-${pre}.csv`, new Blob([ausCsvText(rows)],{type:"text/csv;charset=utf-8"}), `CSV mit ${rows.length} Ausgabe${rows.length===1?"":"n"} bereit`);
+  }
+  async function exportPaket(pre, withInvoices){
+    if(!window.JSZip){ toast("ZIP-Erstellung nicht verfügbar"); return; }
+    const rows=ausRowsFor(pre); const inv=withInvoices ? S.rechnungen.filter(r=>dTyp(r)==="rechnung" && r.nr && dStatus(r)!=="entwurf" && (r.datum||"").startsWith(pre)).sort((a,b)=>(a.datum||"").localeCompare(b.datum||"")) : [];
+    if(!rows.length && !inv.length){ toast("Nichts in diesem Zeitraum"); return; }
+    toast("Paket wird erstellt …");
+    const zip=new window.JSZip(); let fehlt=0;
+    if(rows.length) zip.file(`Ausgaben-${pre}.csv`, ausCsvText(rows));
+    if(inv.length) zip.file(`Rechnungen-${pre}.csv`, docsCsvText(inv));
+    for(const x of rows){ if(!x.bild) continue; const b=await BILD.get(x.id); if(!b){ fehlt++; continue; } zip.file("Belege/"+belegFileName(x), b.data.split(",")[1], {base64:true}); }
+    const blob=await zip.generateAsync({type:"blob", compression:"DEFLATE"});
+    const ok=await saveFile(`repairmobile-${withInvoices?"buchhaltung":"ausgaben"}-${pre}.zip`, blob, `ZIP bereit: ${rows.length} Ausgaben${inv.length?`, ${inv.length} Rechnungen`:""}`);
+    if(ok && fehlt) setTimeout(()=>toast(`${fehlt} Beleg${fehlt===1?"":"e"} nicht auf diesem Gerät – nur in der CSV`),2600);
+  }
+  function ausExportMenu(){
+    const ym=UI.ausMonth, y=ym.slice(0,4), n=ausIn(ym).length, ny=ausIn(y).length;
+    openPicker("Ausgaben exportieren", [
+      {label:`CSV – ${monthLabel(ym)}`, sub:`${n} Ausgabe${n===1?"":"n"} · Tabelle für Excel / Steuerberater`, k:"csvM"},
+      {label:`ZIP mit Belegen – ${monthLabel(ym)}`, sub:"CSV plus alle Belegfotos und PDFs", k:"zipM"},
+      {label:`CSV – ganzes Jahr ${y}`, sub:`${ny} Ausgabe${ny===1?"":"n"}`, k:"csvY"},
+      {label:`ZIP mit Belegen – Jahr ${y}`, sub:"CSV plus alle Belegfotos und PDFs", k:"zipY"}],
+      o => { const pre=o.k.endsWith("M")?ym:y; o.k.startsWith("csv") ? exportAusCsv(pre) : exportPaket(pre,false); });
+  }
+
   /* ---------- Kontakte & Produkte: Import / Export ---------- */
   const LANDS={de:"Deutschland",at:"Österreich",ch:"Schweiz",pt:"Portugal",it:"Italien",fr:"Frankreich",nl:"Niederlande",pl:"Polen",es:"Spanien",tr:"Türkei"};
   function landCode(l){ const v=String(l||"").trim(); if(/^[a-z]{2}$/i.test(v)) return v.toUpperCase(); const hit=Object.entries(LANDS).find(([c,n])=>n.toLowerCase()===v.toLowerCase()); return hit?hit[0].toUpperCase():v; }
@@ -1820,7 +2064,8 @@ export function startApp(){
   /* ---------- Datensicherung ---------- */
   const BACKUP_APP = "repairmobile-werkbank";
   async function exportBackup(){
-    const data = { app:BACKUP_APP, version:1, exportiert:nowStamp(), firma:S.firma, kunden:S.kunden, auftraege:S.auftraege, rechnungen:S.rechnungen, teile:S.teile };
+    const belegBilder={}; for(const x of S.ausgaben) if(x.bild){ const b=await BILD.get(x.id); if(b) belegBilder[x.id]=b; }
+    const data = { app:BACKUP_APP, version:2, exportiert:nowStamp(), firma:S.firma, kunden:S.kunden, auftraege:S.auftraege, rechnungen:S.rechnungen, teile:S.teile, ausgaben:S.ausgaben, belegBilder };
     const filename = `repairmobile-backup-${today()}.json`;
     saveFile(filename, new Blob([JSON.stringify(data, null, 2)], {type:"application/json"}), `Backup gespeichert: ${filename}`);
   }
@@ -1834,6 +2079,7 @@ export function startApp(){
       try{ data = JSON.parse(rd.result); }catch(e){ toast("Die Datei ist kein gültiges Backup (kein JSON)"); return; }
       if(!data || typeof data!=="object" || Array.isArray(data) || (data.app && data.app!==BACKUP_APP)){ toast("Diese Datei ist kein RepairMobile-Backup"); return; }
       const clean = { exportiert: data.exportiert || "", firma: (data.firma && typeof data.firma==="object" && !Array.isArray(data.firma)) ? data.firma : {} };
+      clean.belegBilder = (data.belegBilder && typeof data.belegBilder==="object" && !Array.isArray(data.belegBilder)) ? data.belegBilder : {};
       for(const c of COLLS) clean[c] = Array.isArray(data[c]) ? data[c].filter(o => o && typeof o==="object" && typeof o.id==="string" && o.id) : [];
       if(!Object.keys(clean.firma).length && COLLS.every(c=>!clean[c].length)){ toast("Das Backup enthält keine Daten"); return; }
       UI.pendingImport = clean; UI.view = "mehr"; render();
@@ -1849,6 +2095,7 @@ export function startApp(){
     for(const c of COLLS) S[c] = data[c].map(o=>({...o}));
     try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
     render();
+    for(const [id,b] of Object.entries(data.belegBilder||{})) if(b && typeof b.data==="string" && /^data:/.test(b.data)) await BILD.put(id, {typ:b.typ, data:b.data, name:b.name, size:b.size});
     if(mode==="db"){
       toast("Wiederherstellen läuft …");
       try{
@@ -1861,7 +2108,7 @@ export function startApp(){
         }
       }catch(e){ toast("Wiederherstellen unvollständig – bitte erneut versuchen"); return; }
     }
-    toast(`Backup wiederhergestellt: ${S.kunden.length} Kunden, ${S.auftraege.length} Aufträge, ${S.rechnungen.length} Belege`);
+    toast(`Backup wiederhergestellt: ${S.kunden.length} Kunden, ${S.auftraege.length} Aufträge, ${S.rechnungen.length} Belege, ${S.ausgaben.length} Ausgaben`);
   }
 
 
