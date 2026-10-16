@@ -448,7 +448,20 @@ export function startApp(){
   /* ---------- view bindings ---------- */
   function bindView(){
     const m=$("#main");
+    // Langes Drücken auf einen Kalendertag → Aktionen für diesen Tag
+    m.onpointerdown = e => {
+      if(LP?.fired) LP=null;   // neuer Tipp: vorheriges Long-Press ist erledigt
+      const d=e.target.closest(".day"); if(!d || (e.pointerType==="mouse" && e.button!==0)) return;
+      clearTimeout(LP?.t); d.classList.add("pressing");
+      LP={ d, x:e.clientX, y:e.clientY, fired:false, t:setTimeout(()=>{ LP.fired=true; d.classList.remove("pressing"); d.classList.add("lp-done"); setTimeout(()=>d.classList.remove("lp-done"),340);
+        try{ navigator.vibrate?.(40); }catch(_){} dayMenu(d.dataset.day); setTimeout(()=>{ if(LP?.fired) LP=null; }, 900); }, 500) };
+    };
+    const lpCancel=()=>{ if(LP && !LP.fired){ clearTimeout(LP.t); LP.d.classList.remove("pressing"); LP=null; } };
+    m.onpointermove = e => { if(LP && !LP.fired && Math.hypot(e.clientX-LP.x, e.clientY-LP.y)>10) lpCancel(); };
+    m.onpointerup = lpCancel; m.onpointercancel = lpCancel;
+    m.oncontextmenu = e => { const d=e.target.closest(".day"); if(!d) return; e.preventDefault(); if(!LP?.fired && $("#picker").hidden){ lpCancel(); dayMenu(d.dataset.day); } };
     m.onclick = e => {
+      if(LP?.fired){ LP=null; e.preventDefault(); return; }
       const t=e.target.closest("button"); if(!t) return;
       if(t.dataset.hint){ hidden[t.dataset.hint]=1; try{localStorage.setItem("rm-hints",JSON.stringify(hidden));}catch(e){} render(); return; }
       if(t.dataset.f){ UI.filter=t.dataset.f; render(); return; }
@@ -521,11 +534,12 @@ export function startApp(){
   function openPicker(title, opts, onPick){
     const p=$("#picker");
     p.innerHTML=`<h3>${esc(title)}</h3>${opts.map((o,i)=>`<button class="opt" data-i="${i}"><span>${esc(o.label)}${o.sub?`<small>${esc(o.sub)}</small>`:""}</span>${o.pill?`<span class="pill s-${o.pill}">${DST[o.pill]||""}</span>`:""}</button>`).join("")}<button class="btn ghost wide" id="pkClose">Abbrechen</button>`;
-    $("#pscrim").hidden=false; p.hidden=false;
-    p.onclick=e=>{ const b=e.target.closest("[data-i]"); if(b){ closePicker(); onPick(opts[+b.dataset.i]); } else if(e.target.closest("#pkClose")) closePicker(); };
+    $("#pscrim").hidden=false; p.hidden=false; PK_OPEN=Date.now();
+    p.onclick=e=>{ if(Date.now()-PK_OPEN<450) return; const b=e.target.closest("[data-i]"); if(b){ closePicker(); onPick(opts[+b.dataset.i]); } else if(e.target.closest("#pkClose")) closePicker(); };
   }
   function closePicker(){ $("#picker").hidden=true; $("#pscrim").hidden=true; }
-  $("#pscrim").onclick=closePicker;
+  let PK_OPEN=0;
+  $("#pscrim").onclick=()=>{ if(Date.now()-PK_OPEN<450) return; closePicker(); };
 
   function paperBox(r){ return `<div class="pscale" data-zoomdoc><div class="pinner">${paperHtml(r)}</div></div>`; }
   function fitPapers(root=document){
@@ -646,6 +660,7 @@ export function startApp(){
         ${(a.positionen||[]).map(p=>`<div class="kv"><span style="color:var(--fg)">${numIn(p.menge)} ${esc(p.einheit||"Stk.")} · ${esc(p.bez)}</span><span class="num">${eur(p.menge*p.preis)}</span></div>`).join("") || `<div class="kv"><span>Noch keine Positionen</span><span></span></div>`}
         <div class="total"><span>Summe</span><span class="num">${eur(sumPos(a.positionen))}</span></div></div></div>
       ${docs.length?`<div class="group"><span class="glabel">Dokumente zu diesem Auftrag</span>${docs.map(docCard).join("")}</div>`:""}
+      ${msgButtons(a,k)}
       <div class="btnrow">
         <button class="btn" id="mkInv">${ico.doc} Rechnung erstellen</button>
         <button class="btn ghost" id="mkKva">Kostenvoranschlag</button>
@@ -1325,6 +1340,56 @@ export function startApp(){
     if(mode==="db"){ for(const id of ids){ try{ await dbRefs[coll].doc(id).delete(); }catch(e){ toast("Löschen teilweise fehlgeschlagen – bitte erneut versuchen"); break; } } }
   }
 
+  /* ---------- Kalender: Long-Press-Aktionen ---------- */
+  let LP=null;
+  function dayText(day){
+    const ev=eventsOn(day), f=S.firma;
+    const line=e=>{ const k=kunde(e.a.kundeId); return `${e.t?e.t+" Uhr – ":"• "}${e.a.geraet||"Gerät"} (${k?.name||"ohne Kunde"}${k?.tel?", "+k.tel:""}) · ${STATUS[e.a.status].l}`; };
+    const grp=(kind,title)=>{ const l=ev.filter(e=>e.k===kind); return l.length?`${title}:\n${l.map(line).join("\n")}`:""; };
+    return [`${f.name||"RepairMobile"} – ${longDate(day)}`, grp("t","Termine"), grp("r","Repariert"), grp("a","Abgeholt")].filter(Boolean).join("\n\n");
+  }
+  function copyText(text, okMsg){
+    const fallback=()=>{ openSheet("Text kopieren", `<p class="help">Text ist markiert – jetzt <b>Kopieren</b> wählen.</p><textarea id="cpText" class="mailtext" readonly style="min-height:220px">${esc(text)}</textarea>`, null, "", {cancelLabel:"Fertig"});
+      setTimeout(()=>{ const t=$("#cpText"); if(t){ t.focus(); t.select(); } }, 300); };
+    try{ navigator.clipboard.writeText(text).then(()=>toast(okMsg), fallback); }catch(e){ fallback(); }
+  }
+  function dayMenu(day){
+    const n=eventsOn(day).length;
+    UI.calDay=day; if(UI.calMonth!==day.slice(0,7)) UI.calMonth=day.slice(0,7);
+    $$("#main .day").forEach(b=>b.setAttribute("aria-pressed", String(b.dataset.day===day)));
+    openPicker(longDate(day), [
+      {label:"+ Neuer Termin an diesem Tag", sub:"Auftrag mit diesem Datum anlegen", v:"new"},
+      {label:"Tagesaufträge als Text kopieren", sub: n ? `${n} Eintrag${n===1?"":"e"} – für WhatsApp oder E-Mail` : "Keine Einträge an diesem Tag", v:"copy"}
+    ], o => {
+      if(o.v==="new") return openAuftrag(null, day);
+      if(!n){ toast("An diesem Tag ist nichts eingetragen"); return; }
+      copyText(dayText(day), "Tagesübersicht kopiert");
+    });
+    render();
+  }
+
+  /* ---------- WhatsApp / SMS an Kunden ---------- */
+  function intlPhone(tel){
+    let t=String(tel||"").replace(/[^\d+]/g,"");
+    if(t.startsWith("+")) t=t.slice(1); else if(t.startsWith("00")) t=t.slice(2); else if(t.startsWith("0")) t="49"+t.slice(1);
+    return t.length>=8 ? t : "";
+  }
+  function readyText(a,k){
+    const inv=S.rechnungen.filter(r=>r.auftragId===a.id && dTyp(r)==="rechnung" && r.nr && dStatus(r)!=="storniert").sort((x,y)=>(y.datum||"").localeCompare(x.datum||""))[0];
+    const sum = inv ? calc(inv).brutto : sumPos(a.positionen);
+    const dev = (a.geraet||"Gerät").split(/\s[–-]\s/)[0].trim();
+    return `Hallo ${k?.name||""}, Ihr ${dev} ist fertig repariert und liegt zur Abholung bereit!${sum?` Betrag: ${eur(sum)}.`:""} Viele Grüße, ${S.firma.name||"RepairMobile"}`.replace("Hallo ,","Hallo,");
+  }
+  function msgButtons(a,k){
+    const tel=intlPhone(k?.tel), txt=encodeURIComponent(readyText(a,k));
+    const wa='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2c-1.5 0-3-.4-4.3-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.7.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.2-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2c0 1.3.9 2.5 1 2.7s1.8 2.8 4.4 3.9c1.6.7 2.3.8 3.1.6.5-.1 1.5-.6 1.7-1.2s.2-1.1.2-1.2-.2-.2-.5-.3z"/></svg>';
+    if(!tel) return `<div class="group"><span class="glabel">Kunde benachrichtigen</span><div class="btnrow"><span class="btn wa" aria-disabled="true">${wa} WhatsApp an Kunden</span></div><p class="help">Beim Kunden ist keine Handynummer hinterlegt.</p></div>`;
+    return `<div class="group"><span class="glabel">Kunde benachrichtigen</span><div class="btnrow">
+      <a class="btn wa" href="https://wa.me/${tel}?text=${txt}" target="_blank" rel="noopener">${wa} WhatsApp an Kunden</a>
+      <a class="btn ghost" href="sms:+${tel}${/iPhone|iPad/.test(navigator.userAgent)?"&":"?"}body=${txt}">SMS</a></div>
+      <p class="help">„Hallo ${esc(k.name)}, Ihr ${esc((a.geraet||"Gerät").split(/\s[–-]\s/)[0])} ist fertig repariert …“</p></div>`;
+  }
+
   /* ---------- Kontakte & Produkte: Import / Export ---------- */
   const LANDS={de:"Deutschland",at:"Österreich",ch:"Schweiz",pt:"Portugal",it:"Italien",fr:"Frankreich",nl:"Niederlande",pl:"Polen",es:"Spanien",tr:"Türkei"};
   function landCode(l){ const v=String(l||"").trim(); if(/^[a-z]{2}$/i.test(v)) return v.toUpperCase(); const hit=Object.entries(LANDS).find(([c,n])=>n.toLowerCase()===v.toLowerCase()); return hit?hit[0].toUpperCase():v; }
@@ -1934,6 +1999,7 @@ export function startApp(){
   })();
 
   /* ---------- start ---------- */
+  document.addEventListener("touchstart", ()=>{}, {passive:true});
   applyTheme(); lsLoad(); render(); connectDb();
   // first visit: show the short tour for Aufträge once
   setTimeout(()=>{ let seen=false; try{ seen=!!localStorage.getItem("rm-tour-auftraege"); }catch(e){} if(!seen && UI.view==="auftraege" && $("#sheet").hidden) startTour("auftraege"); }, 900);
