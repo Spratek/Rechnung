@@ -200,7 +200,8 @@ export function startApp(){
   const nextJobNrFor = f => freeNr(nrStem("job",f), 1+Math.max(runNo(S.auftraege,-1), nrMax(S.auftraege, nrStem("job",f))), S.auftraege);
   const nextJobNr = () => nextJobNrFor(S.firma);
   const dTyp = r => r.typ || "rechnung";
-  const dMwst = r => r.mwst ?? (r.kleinunternehmer ? 0 : 19);
+  const dKu = r => r.ku ?? r.kleinunternehmer ?? (r.mwst===0 && !!S.firma.kleinunternehmer);
+  const dMwst = r => dKu(r) ? 0 : (r.mwst ?? 19);
   const dBrutto = r => r.brutto ?? true;
   function nextNr(typ, f=S.firma){ const y=new Date().getFullYear(); const stem=nrStem(typ,f,y);
     const all=S.rechnungen.filter(r=>dTyp(r)===typ && r.nr), scope = nrWithYear(f) ? all.filter(r=>(r.datum||"").startsWith(String(y))) : all;
@@ -678,8 +679,8 @@ export function startApp(){
   function newDocFrom({typ="rechnung", auftragId="", kundeId="", from=null}){
     const f=S.firma, d=today();
     const base = { id:uid(), typ, nr:"", status:"entwurf", kundeId, auftragId, geraet:"", imei:"", datum:d, leistung:d,
-      faellig:addDays(d, typ==="rechnung" ? +(f.ziel??14) : 30), positionen:[], mwst:f.kleinunternehmer?0:19, brutto:!f.netto, rabatt:0, notiz:defaultNote(typ), verlauf:[], created:nowStamp() };
-    if(from){ Object.assign(base, {kundeId:from.kundeId, auftragId:from.auftragId||"", geraet:from.geraet||"", imei:from.imei||"", positionen:(from.positionen||[]).map(p=>({...p})), mwst:dMwst(from), brutto:dBrutto(from), rabatt:from.rabatt||0, ausDoc:from.id}); }
+      faellig:addDays(d, typ==="rechnung" ? +(f.ziel??14) : 30), positionen:[], ku:!!f.kleinunternehmer, mwst:f.kleinunternehmer?0:19, brutto:!f.netto, rabatt:0, notiz:defaultNote(typ), verlauf:[], created:nowStamp() };
+    if(from){ Object.assign(base, {kundeId:from.kundeId, auftragId:from.auftragId||"", geraet:from.geraet||"", imei:from.imei||"", positionen:(from.positionen||[]).map(p=>({...p})), ku:dKu(from), mwst:dMwst(from), brutto:dBrutto(from), rabatt:from.rabatt||0, ausDoc:from.id}); }
     if(auftragId){ const a=S.auftraege.find(x=>x.id===auftragId); if(a) Object.assign(base, {kundeId:a.kundeId, geraet:a.geraet, imei:a.imei||"", leistung:a.erledigt||d, positionen:(a.positionen||[]).map(p=>({einheit:"Stk.",...p}))}); }
     return base;
   }
@@ -694,7 +695,7 @@ export function startApp(){
     if(k.neu){ d._kundeNeu=k.neu; d.kundeId=k.id; } else if(!k.err) d.kundeId=k.id; else d._kErr=k.err;
     d.auftragId=val("eAuftrag"); d.datum=val("eDatum")||today(); d.faellig=val("eFaellig"); d.leistung=val("eLeistung")||d.datum;
     d.geraet=val("eGeraet"); d.positionen=readPos();
-    d.mwst=Math.max(0,parseNum(val("eMwst"))); d.rabatt=Math.max(0,Math.min(100,parseNum(val("eRabatt")))); d.brutto=$("#eBrutto").checked; d.notiz=$("#eNotiz").value.trim();
+    d.ku=$("#eKu").checked; d.mwst=d.ku?0:Math.max(0,parseNum(val("eMwst"))); d.rabatt=Math.max(0,Math.min(100,parseNum(val("eRabatt")))); d.brutto=$("#eBrutto").checked; d.notiz=$("#eNotiz").value.trim();
     return d;
   }
   function renderEditor(d, isEdit){
@@ -717,10 +718,11 @@ export function startApp(){
         <div class="lineform"><span>Leistungsdatum</span><input type="date" class="input" id="eLeistung" value="${d.leistung||d.datum}"></div></div>
       ${posSection(d.positionen)}
       <div class="sec"><h4>${ico.pct}Steuern &amp; Rabatt</h4>
-        <div class="lineform"><span>MwSt. (%)</span><input class="input" id="eMwst" inputmode="decimal" value="${numIn(d.mwst)}"></div>
+        <div class="lineform"><span><b class="tl">Kleinunternehmer (§ 19 UStG)</b><small class="tsub">Ohne Umsatzsteuer abrechnen</small></span><input type="checkbox" class="toggle" id="eKu" ${dKu(d)?"checked":""}></div>
+        <div class="lineform" id="eMwstRow"><span>MwSt. (%)</span><input class="input" id="eMwst" inputmode="decimal" value="${numIn(dKu(d)?0:d.mwst)}" ${dKu(d)?"disabled":""}></div>
+        <div class="lineform" id="eBruttoRow" ${dKu(d)?"hidden":""}><span><b class="tl">Preise enthalten MwSt.</b><small class="tsub" id="eBruttoTxt"></small></span><input type="checkbox" class="toggle" id="eBrutto" ${d.brutto?"checked":""}></div>
+        <div class="kuhint" id="eKuHint" ${dKu(d)?"":"hidden"}>${ico.doc}<span><b>Brutto = Netto.</b> Auf dem Beleg steht automatisch:<br><i>„Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.“</i></span></div>
         <div class="lineform"><span>Rabatt (%)</span><input class="input" id="eRabatt" inputmode="decimal" placeholder="0" value="${d.rabatt?numIn(d.rabatt):""}"></div>
-        <div class="lineform"><span>Preise enthalten MwSt.</span><input type="checkbox" class="toggle" id="eBrutto" ${d.brutto?"checked":""}></div>
-        <p class="help" style="margin:0">${S.firma.kleinunternehmer?"Kleinunternehmer: MwSt. 0 % – auf dem Blatt steht dann der Hinweis nach § 19 UStG.":"Für Privatkunden meist an (Endpreise). Aus: Preise sind netto, MwSt. kommt dazu."}</p>
         <div class="sumlines" id="docSum">${sumLinesHtml(calc(d))}</div></div>
       <div class="sec"><h4>${ico.text}<span class="sp">Hinweis auf dem Blatt</span>${defaultNote(d.typ)?`<button type="button" class="linkbtn" id="eNoteStd">Standardtext</button>`:""}</h4><textarea id="eNotiz" class="input" rows="4" placeholder="${d.typ==="rechnung"?"z. B. Garantie-Hinweis – Standardtext unter Einstellungen › Textbausteine":"z. B. Reparaturdauer – Standardtext unter Einstellungen › Textbausteine"}">${esc(d.notiz)}</textarea>
         ${S.firma.haftung?`<p class="help" style="margin:0">Der Haftungsausschluss aus den Textbausteinen steht zusätzlich klein unten auf dem Blatt.</p>`:""}</div>
@@ -731,9 +733,15 @@ export function startApp(){
       foot:`<button class="btn wide" id="eDraft">${ico.checkc} Als Entwurf speichern</button><button class="btn accent wide" id="eMake">${T.make}</button>`
     });
     bindKundeSelect("e");
-    const refreshSum=()=>{ const t={...d, positionen:readPos(), mwst:parseNum(val("eMwst")), rabatt:parseNum(val("eRabatt")), brutto:$("#eBrutto").checked}; $("#docSum").innerHTML=sumLinesHtml(calc(t)); };
-    bindPos(refreshSum);
-    ["eMwst","eRabatt"].forEach(i=>$("#"+i).oninput=refreshSum); $("#eBrutto").onchange=refreshSum;
+    const refreshSum=()=>{ const ku=$("#eKu").checked; const t={...d, positionen:readPos(), ku, mwst:ku?0:parseNum(val("eMwst")), rabatt:parseNum(val("eRabatt")), brutto:$("#eBrutto").checked}; $("#docSum").innerHTML=sumLinesHtml(calc(t)); };
+    const bruttoTxt=()=>{ $("#eBruttoTxt").textContent = $("#eBrutto").checked ? "Eingabe ist Brutto (Endpreis inkl. MwSt.)" : "Eingabe ist Netto (zzgl. MwSt.)"; };
+    let mwstMerk = dKu(d) ? (d.mwst||19) : d.mwst;
+    const kuSync=()=>{ const ku=$("#eKu").checked, m=$("#eMwst");
+      if(ku){ if(!m.disabled){ const v=parseNum(m.value); mwstMerk = v>0 ? v : (mwstMerk||19); } m.value="0"; m.disabled=true; }
+      else if(m.disabled){ m.disabled=false; m.value=numIn(mwstMerk>0?mwstMerk:19); }
+      $("#eMwstRow").classList.toggle("off",ku); $("#eBruttoRow").hidden=ku; $("#eKuHint").hidden=!ku; refreshSum(); };
+    bindPos(refreshSum); bruttoTxt();
+    ["eMwst","eRabatt"].forEach(i=>$("#"+i).oninput=refreshSum); $("#eBrutto").onchange=()=>{ bruttoTxt(); refreshSum(); }; $("#eKu").onchange=kuSync;
     const keepK=()=>{ if(d._kundeNeu){ save("kunden",d._kundeNeu); d._kundeNeu=null; } };
     const ns=$("#eNoteStd"); if(ns) ns.onclick=()=>{ $("#eNotiz").value=defaultNote(d.typ); };
     $$("[data-typ]").forEach(b=>b.onclick=()=>{ collectEditor(d); keepK(); const old=d.typ; d.typ=b.dataset.typ;
@@ -845,7 +853,7 @@ export function startApp(){
       ? (dStatus(r)==="bezahlt" ? `Betrag dankend erhalten${r.bezahltAm?" am "+deDate(r.bezahltAm):""}.` : "")
       : t==="kva" ? `Dieser Kostenvoranschlag ist unverbindlich und gilt bis zum ${deDate(r.faellig)}. Sollten sich die Kosten wesentlich erhöhen, informieren wir Sie vorher.`
       : `Dieses Angebot gilt bis zum ${deDate(r.faellig)}. Wir freuen uns auf Ihren Auftrag.`;
-    return { k, intro, pay, anrede: k.name?`Hallo ${k.name},`:"Sehr geehrte Damen und Herren,", klein: !c.p && !!f.kleinunternehmer,
+    return { k, intro, pay, anrede: k.name?`Hallo ${k.name},`:"Sehr geehrte Damen und Herren,", klein: !c.p && dKu(r),
       stamp: !!f.stempel && t==="rechnung" && dStatus(r)==="bezahlt" };
   }
 
@@ -908,7 +916,7 @@ export function startApp(){
     if(lay==="neutral"){ const N=neutralData(r,D);
       const prow=(p,i)=>`<tr><td><div class="dd"><span class="n">${i+1}.</span><span class="d">${e(p.bez)}</span></div></td><td class="r">${qtyTxt(p.menge)} ${e(p.einheit||"Stk.")}</td><td class="r">${eurTxt(p.preis)}</td><td class="r">${eurTxt(p.menge*p.preis)}</td></tr>`;
       const srow=(a,b,cls="")=>`<tr class="${cls}"><td colspan="3">${a}</td><td class="r">${b}</td></tr>`;
-      const tax = c.p ? srow(`zzgl. Umsatzsteuer ${numIn(c.p)} %`, eurTxt(c.mwst)) : srow(f.kleinunternehmer?"Umsatzsteuer nicht erhoben gemäß § 19 UStG.":"Umsatzsteuer 0 %", "");
+      const tax = c.p ? srow(`zzgl. Umsatzsteuer ${numIn(c.p)} %`, eurTxt(c.mwst)) : srow(dKu(r)?"Umsatzsteuer nicht erhoben gemäß § 19 UStG.":"Umsatzsteuer 0 %", "");
       const cols=[[["",f.name],["",f.strasse],["",[f.plz,f.ort].filter(Boolean).join(" ")]],[["Tel",f.tel],["Mail",f.mail]],[["Bank",f.bank],["IBAN",f.iban],["BIC",f.bic]],[["St.-Nr.",f.stnr],["USt-ID",f.ustid]]]
         .map(cl=>cl.filter(x=>x[1])).filter(cl=>cl.length);
       return `<div class="paper lay-neutral">${stamp}
@@ -1139,7 +1147,7 @@ export function startApp(){
       const trow=(a,b,fill,bold)=>{ if(y+7.5>bottom){ doc.addPage(); pageDeco(false); y=20; } if(fill){ doc.setFillColor(236,236,236); doc.rect(L,y,R-L,7,"F"); } fnt("normal",FS2); col(INK); txt(a,L+2.5,y+4.7); if(b){ fnt(bold?"bold":"normal",FS2); txt(b,cG,y+4.7,{align:"right"}); } y+=7; };
       if(c.rab){ trow("Summe Positionen",eurTxt(c.sum),false); trow(`Rabatt (${numIn(r.rabatt)} %)`,"− "+eurTxt(c.rab),false); }
       trow("Gesamtbetrag netto",eurTxt(c.netto),true);
-      if(c.p) trow(`zzgl. Umsatzsteuer ${numIn(c.p)} %`,eurTxt(c.mwst),false); else trow(f.kleinunternehmer?"Umsatzsteuer nicht erhoben gemäß § 19 UStG.":"Umsatzsteuer 0 %","",false);
+      if(c.p) trow(`zzgl. Umsatzsteuer ${numIn(c.p)} %`,eurTxt(c.mwst),false); else trow(dKu(r)?"Umsatzsteuer nicht erhoben gemäß § 19 UStG.":"Umsatzsteuer 0 %","",false);
       trow("Gesamtbetrag brutto",eurTxt(c.brutto),true,true);
       y+=9; fnt("normal",FS2); col(INK);
       [X.pay, r.notiz, N.thanks].filter(Boolean).forEach(pp=>{ const ls=doc.splitTextToSize(pp,R-L); if(y+ls.length*3.8>bottom){ doc.addPage(); pageDeco(false); y=20; } txt(ls,L,y); y+=ls.length*3.8+3; });
