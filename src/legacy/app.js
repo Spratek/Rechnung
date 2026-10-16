@@ -185,12 +185,28 @@ export function startApp(){
   const kunde = id => S.kunden.find(k=>k.id===id);
   const kName = id => kunde(id)?.name || "Ohne Kunde";
   const sumPos = p => (p||[]).reduce((a,x)=>a+(+x.menge||0)*(+x.preis||0),0);
-  const nextJobNr = () => "JOB-"+pad4(1+Math.max(0,...S.auftraege.map(a=>parseInt((a.nr||"").split("-")[1])||0)));
+  const NR_DEF = { job:"JOB-", rechnung:"RE-", angebot:"AN-", kva:"KV-" };
+  const NR_KEY = { job:"preJob", rechnung:"preRe", angebot:"preAn", kva:"preKv" };
+  function nrPrefix(kind, f=S.firma){ const v=f[NR_KEY[kind]]; return (v==null || String(v).trim()==="") ? NR_DEF[kind] : String(v).trim(); }
+  const nrWithYear = (f=S.firma) => f.nrJahr !== false;
+  // Stamm einer neuen Nummer, z. B. "RE-2026-" (mit Jahr) oder "RE-" (ohne Jahr). Aufträge immer ohne Jahr.
+  function nrStem(kind, f=S.firma, y=new Date().getFullYear()){ const p=nrPrefix(kind,f); return kind!=="job" && nrWithYear(f) ? `${p}${y}-` : p; }
+  // höchste vergebene laufende Nummer zu genau diesem Stamm (andere/alte Formate zählen nicht mit)
+  function nrMax(list, stem){ let m=0; for(const x of list){ const n=String(x.nr||""); if(!n.startsWith(stem)) continue; const rest=n.slice(stem.length); if(/^\d+$/.test(rest)) m=Math.max(m, parseInt(rest,10)); } return m; }
+  function readNrForm(){ const t=id=>($("#"+id)?.value||"").replace(/\s+/g,"").toUpperCase(); return { preJob:t("cPreJob"), preRe:t("cPreRe"), preAn:t("cPreAn"), preKv:t("cPreKv"), nrJahr:$("#cNrJahr")?.checked!==false }; }
+  // laufende Nummer = höchste bisher vergebene (egal mit welchem Kürzel) + 1; mit Jahreszahl nur Belege aus diesem Jahr
+  function runNo(list, y){ return Math.max(0, ...list.map(x=>seqNo(x.nr, y))); }
+  function freeNr(stem, n, list){ const taken=new Set(list.map(x=>String(x.nr||""))); let nr; do{ nr=stem+pad4(n++); }while(taken.has(nr)); return nr; }
+  const nextJobNrFor = f => freeNr(nrStem("job",f), 1+Math.max(runNo(S.auftraege,-1), nrMax(S.auftraege, nrStem("job",f))), S.auftraege);
+  const nextJobNr = () => nextJobNrFor(S.firma);
   const dTyp = r => r.typ || "rechnung";
   const dMwst = r => r.mwst ?? (r.kleinunternehmer ? 0 : 19);
   const dBrutto = r => r.brutto ?? true;
-  function nextNr(typ){ const y=new Date().getFullYear(); const pre=`${TYP[typ].pre}-${y}-`; const nums=S.rechnungen.filter(r=>(r.nr||"").startsWith(pre)).map(r=>parseInt(r.nr.slice(pre.length))||0); const start = typ==="rechnung" && +S.firma.reStartYear===y ? (+S.firma.reStart||1)-1 : 0; return pre+pad4(1+Math.max(0,start,...nums)); }
-  const shownNr = r => r.nr || `${TYP[dTyp(r)].pre}-${new Date().getFullYear()}-····`;
+  function nextNr(typ, f=S.firma){ const y=new Date().getFullYear(); const stem=nrStem(typ,f,y);
+    const all=S.rechnungen.filter(r=>dTyp(r)===typ && r.nr), scope = nrWithYear(f) ? all.filter(r=>(r.datum||"").startsWith(String(y))) : all;
+    const used=Math.max(runNo(scope, y), nrMax(all, stem));
+    const start = typ==="rechnung" && +f.reStartYear===y ? (+f.reStart||1)-1 : 0; return freeNr(stem, 1+Math.max(used,start), all); }
+  const shownNr = r => r.nr || `${nrStem(dTyp(r))}····`;
   function calc(r){
     const sum=r2(sumPos(r.positionen)); const rab=r2(sum*(+r.rabatt||0)/100); const base=r2(sum-rab); const p=dMwst(r);
     if(!p) return {sum, rab, netto:base, mwst:0, brutto:base, p};
@@ -1228,11 +1244,22 @@ export function startApp(){
         <div class="field"><label for="cKlein">Kleinunternehmer</label><input type="checkbox" class="toggle" id="cKlein" ${f.kleinunternehmer?"checked":""}></div>
         <div class="field"><label for="cNetto">Preise netto eingeben</label><input type="checkbox" class="toggle" id="cNetto" ${f.netto?"checked":""}></div></div>
         <p class="help">Kleinunternehmer an: neue Belege ohne MwSt., mit Hinweis auf § 19 UStG. „Preise netto“ an: MwSt. wird auf Ihre Preise aufgeschlagen (sonst sind die Preise Endpreise inkl. MwSt.).</p></div>
+      <div class="group"><span class="glabel">Nummernkreise</span><div class="box">
+        <div class="field"><label for="cPreJob">Aufträge</label><input id="cPreJob" class="mono" maxlength="12" autocapitalize="characters" placeholder="JOB-" value="${esc(f.preJob??"")}"></div>
+        <div class="field"><label for="cPreRe">Rechnungen</label><input id="cPreRe" class="mono" maxlength="12" autocapitalize="characters" placeholder="RE-" value="${esc(f.preRe??"")}"></div>
+        <div class="field"><label for="cPreAn">Angebote</label><input id="cPreAn" class="mono" maxlength="12" autocapitalize="characters" placeholder="AN-" value="${esc(f.preAn??"")}"></div>
+        <div class="field"><label for="cPreKv">Kostenvoranschläge</label><input id="cPreKv" class="mono" maxlength="12" autocapitalize="characters" placeholder="KV-" value="${esc(f.preKv??"")}"></div>
+        <div class="field"><label for="cNrJahr">Jahreszahl in Belegnummer</label><input type="checkbox" class="toggle" id="cNrJahr" ${f.nrJahr!==false?"checked":""}></div>
+        <div class="kv" style="flex-direction:column;gap:6px"><span>Nächste Nummern</span><div id="nrPrev" class="mono"></div></div></div>
+        <p class="help">Leer lassen = Standard. Bestehende Aufträge und Belege behalten ihre Nummer. Die laufende Nummer zählt einfach weiter, auch wenn Sie ein Kürzel ändern. Mit Jahreszahl beginnt jedes neue Jahr wieder bei 0001.</p></div>
       <div class="group"><span class="glabel">Standards</span><div class="box">
         <div class="field"><label for="cZiel">Zahlungsziel (Tage)</label><input id="cZiel" inputmode="numeric" value="${f.ziel??14}"></div>
         <div class="field"><label for="cPausch">Arbeitspauschale €</label><input id="cPausch" inputmode="decimal" value="${numIn(f.pauschale??39)}"></div></div></div>`, () => {
-        saveFirma({...S.firma, name:val("cName"), strasse:val("cStr"), plz:val("cPlz"), ort:val("cOrt"), tel:val("cTel"), mail:val("cMail"), ansprechpartner:val("cAnsp"), bank:val("cBank"), iban:val("cIban").toUpperCase(), bic:val("cBic").toUpperCase(), stnr:val("cStnr"), ustid:val("cUst"), kleinunternehmer:$("#cKlein").checked, netto:$("#cNetto").checked, ziel:parseInt(val("cZiel"))||14, pauschale:parseNum(val("cPausch")), logo});
+        saveFirma({...S.firma, name:val("cName"), strasse:val("cStr"), plz:val("cPlz"), ort:val("cOrt"), tel:val("cTel"), mail:val("cMail"), ansprechpartner:val("cAnsp"), bank:val("cBank"), iban:val("cIban").toUpperCase(), bic:val("cBic").toUpperCase(), stnr:val("cStnr"), ustid:val("cUst"), kleinunternehmer:$("#cKlein").checked, netto:$("#cNetto").checked, ziel:parseInt(val("cZiel"))||14, pauschale:parseNum(val("cPausch")), logo, ...readNrForm()});
         toast("Firmendaten gespeichert"); });
+    const nrUpd=()=>{ const f2={...S.firma, ...readNrForm()};
+      $("#nrPrev").innerHTML=[["Auftrag",nextJobNrFor(f2)],["Rechnung",nextNr("rechnung",f2)],["Angebot",nextNr("angebot",f2)],["KVA",nextNr("kva",f2)]].map(([a,b])=>`<i>${a}</i><b>${esc(b)}</b>`).join(""); };
+    ["cPreJob","cPreRe","cPreAn","cPreKv"].forEach(id=>$("#"+id).oninput=nrUpd); $("#cNrJahr").onchange=nrUpd; nrUpd();
     $("#cLogo").onchange=e=>{ const file=e.target.files[0]; if(!file) return; const rd=new FileReader(); rd.onload=()=>prepareLogo(rd.result, out=>{ logo=out; $("#lPrev img").src=logo; $("#lInfo").textContent="Neues Logo – zum Übernehmen „Speichern“ tippen"; }); rd.readAsDataURL(file); };
     const ld=$("#cLogoDel"); if(ld) ld.onclick=()=>{ logo=""; $("#lPrev img").src=BRAND_LOGO; $("#lInfo").textContent="Standard: RepairMobile-Logo"; ld.remove(); };
   }
@@ -1246,7 +1273,7 @@ export function startApp(){
     const a1={id:uid(), nr:nextJobNr(), created:today(), geraet:"iPhone 13 Pro – Display (Beispiel)", problem:"Display gesprungen, Touch reagiert unten nicht.", imei:"35 291611 482736 4", zubehoer:"Hülle", kundeId:k.id, termin:today()+"T08:00", erledigt:"", status:"reparatur",
       positionen:[{bez:"Display iPhone 13 Pro (OLED) (DSP-13P)",menge:1,einheit:"Stk.",preis:189,teilId:t.id},{bez:"Arbeitszeit / Reparatur",menge:1,einheit:"psch.",preis:39}]};
     save("auftraege",a1);
-    const a2={id:uid(), nr:"JOB-"+pad4(parseInt(a1.nr.split("-")[1])+1), created:today(), geraet:"Galaxy S22 – Akkutausch (Beispiel)", problem:"Akku hält keinen halben Tag.", kundeId:k.id, termin:addDays(today(),2)+"T14:30", erledigt:"", status:"angenommen", positionen:[{bez:"Akku Galaxy S22",menge:1,einheit:"Stk.",preis:69},{bez:"Arbeitszeit / Reparatur",menge:1,einheit:"psch.",preis:39}]};
+    const a2={id:uid(), nr:nextJobNr(), created:today(), geraet:"Galaxy S22 – Akkutausch (Beispiel)", problem:"Akku hält keinen halben Tag.", kundeId:k.id, termin:addDays(today(),2)+"T14:30", erledigt:"", status:"angenommen", positionen:[{bez:"Akku Galaxy S22",menge:1,einheit:"Stk.",preis:69},{bez:"Arbeitszeit / Reparatur",menge:1,einheit:"psch.",preis:39}]};
     save("auftraege",a2);
     toast("Beispiel angelegt – zum Löschen Auftrag öffnen → Bearbeiten");
   }
@@ -1683,7 +1710,7 @@ export function startApp(){
     const neu=recs.filter(r=>!exists(r)), dup=recs.length-neu.length;
     const newKunden=new Set(neu.filter(r=>r.kunde && !findK(r)).map(r=>normH(r.kunde))).size;
     const y=new Date().getFullYear(), seqMax=Math.max(0,...neu.filter(r=>r.datum.startsWith(String(y))).map(r=>seqNo(r.nr,y)));
-    const ownMax=Math.max(0,...S.rechnungen.filter(d=>(d.nr||"").startsWith(`RE-${y}-`)).map(d=>parseInt(d.nr.slice(8))||0));
+    const ownMax=nrMax(S.rechnungen.filter(d=>dTyp(d)==="rechnung"), nrStem("rechnung"));
     const suggest = seqMax ? Math.max(seqMax, ownMax)+1 : 0;
     const sum=neu.reduce((s,r)=>s+r.brutto,0);
     const chips=IMPORT_FIELDS.rechnungen.filter(([k])=>map[k]!=null).map(([k,l])=>`<span class="mapchip"><b>${esc(l)}</b><span>← ${esc(rows[hi][map[k]])}</span></span>`).join("");
@@ -1694,7 +1721,7 @@ export function startApp(){
       <div class="group"><span class="glabel">Vorschau${recs.length>8?` (erste 8 von ${recs.length})`:""}</span><div class="box imprev">${prev}</div></div>
       <div class="card" style="gap:8px">
         <span>${neu.length} neu${dup?`, ${dup} schon vorhanden (werden übersprungen)`:""}${newKunden?` · ${newKunden===1?"1 neuer Kunde wird":newKunden+" neue Kunden werden"} angelegt`:""}.</span>
-        ${suggest?`<div class="lineform" style="border-top:1px solid var(--line);padding-top:10px"><span><b style="font-weight:600">Nummern fortsetzen</b><br><small style="color:var(--muted)">Neue Rechnungen in der Werkbank starten mit RE-${y}-${pad4(suggest)}, damit sie an Ihre sevdesk-Nummern anschließen.</small></span><input type="checkbox" class="toggle" id="imSeq" checked></div>`:""}
+        ${suggest?`<div class="lineform" style="border-top:1px solid var(--line);padding-top:10px"><span><b style="font-weight:600">Nummern fortsetzen</b><br><small style="color:var(--muted)">Neue Rechnungen in der Werkbank starten mit ${esc(nrStem("rechnung"))}${pad4(suggest)}, damit sie an Ihre sevdesk-Nummern anschließen.</small></span><input type="checkbox" class="toggle" id="imSeq" checked></div>`:""}
         <p class="help" style="margin:0">Übernommen werden Nummer, Datum, Kunde, Betrag, Steuersatz und Status. Die einzelnen Positionen stehen nicht in der sevdesk-Liste – jede Rechnung bekommt eine Sammelposition. Die Original-PDFs aus sevdesk bleiben Ihre Belege.</p></div>
     `, null, "", { foot:`<button class="btn accent wide" id="imGo" ${neu.length?"":"disabled style='opacity:.5'"}>${ico.upl} ${neu.length} Rechnung${neu.length===1?"":"en"} importieren</button>` });
     $("#imGo").onclick=()=>{
