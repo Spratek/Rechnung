@@ -1647,13 +1647,15 @@ export function startApp(){
   const geminiModels = () => { const m=String(S.firma.geminiModel||"").trim(); return m ? [m, ...GEMINI_DEFAULT.filter(x=>x!==m)] : GEMINI_DEFAULT; };
   function geminiPrompt(){
     const own=[S.firma.name, S.firma.ansprechpartner].filter(Boolean).join(", ");
-    return `Analysiere diesen Beleg/diese Rechnung und antworte AUSSCHLIESSLICH mit einem gültigen JSON-Objekt ohne Markdown-Codeblocks: {"haendler": "Name des Verkäufers/Shops", "datum": "DD.MM.YYYY", "rechnungsnr": "Rechnungsnummer", "brutto": 0.00, "mwst_prozent": 19}
+    return `Analysiere diesen Beleg/diese Rechnung und antworte AUSSCHLIESSLICH mit einem gültigen JSON-Objekt ohne Markdown-Codeblocks: {"haendler": "Name des Verkäufers/Shops", "datum": "DD.MM.YYYY", "rechnungsnr": "Rechnungsnummer", "brutto": 0.00, "mwst_prozent": 19, "notiz": "Kurzbeschreibung der gekauften Artikel", "kategorie": "Ersatzteile"}
   Regeln:
   - haendler: Firmenname des Verkäufers, meist ganz oben im Briefkopf. Nicht der Rechnungsempfänger${own?` (${own})`:""}. Bei Plattformen wie eBay, Amazon oder AliExpress den konkreten Verkäufer nehmen, falls genannt. Niemals USt-IdNr., Steuernummer, IBAN oder Adresse.
   - datum: Rechnungs- bzw. Belegdatum (nicht Fälligkeits- oder Lieferdatum).
   - rechnungsnr: Rechnungs- oder Belegnummer (nicht Kunden-, Bestell- oder Auftragsnummer).
   - brutto: zu zahlender Gesamtbetrag inklusive MwSt. als Zahl mit Punkt, z. B. 20.89.
   - mwst_prozent: 19, 7 oder 0.
+  - notiz: sehr kurze Zusammenfassung auf Deutsch, was gekauft wurde (max. 80 Zeichen, Stichworte mit Komma getrennt, Gerätemodelle kurz), z. B. "Display für S22, Lötflussmittel". Keine Preise, keine Mengenangaben außer wenn wichtig.
+  - kategorie: genau einer dieser Werte: ${AKAT.map(k=>`"${k}"`).join(", ")}. Handy-/Tablet-Ersatzteile, Akkus, Displays, Gehäuse = "Ersatzteile"; Schraubendreher, Lötstation, Messgeräte = "Werkzeug"; Versand, Porto, Paket = "Porto/Versand"; Lötzinn, Flussmittel, Kleber, Reinigung, Schutzfolien = "Verbrauchsmaterial"; Papier, Drucker, Software, Abos = "Büro & Software".
   - Unbekannte Werte: null.`;
   }
   async function geminiImageData(beleg){
@@ -1675,7 +1677,8 @@ export function startApp(){
     const body={ contents:[{role:"user", parts}], generationConfig:{ temperature:0 } };
     if(json) Object.assign(body.generationConfig, { responseMimeType:"application/json", responseSchema:{ type:"OBJECT", properties:{
       haendler:{type:"STRING", nullable:true}, datum:{type:"STRING", nullable:true}, rechnungsnr:{type:"STRING", nullable:true},
-      brutto:{type:"NUMBER", nullable:true}, mwst_prozent:{type:"NUMBER", nullable:true} } } });
+      brutto:{type:"NUMBER", nullable:true}, mwst_prozent:{type:"NUMBER", nullable:true},
+      notiz:{type:"STRING", nullable:true}, kategorie:{type:"STRING", nullable:true, enum:AKAT} } } });
     let last=null;
     for(const model of models){
       const ctl=new AbortController(), t=setTimeout(()=>ctl.abort(), timeout);
@@ -1713,9 +1716,16 @@ export function startApp(){
     if(p!=null && isFinite(p)) p=[19,7,0].reduce((a,b)=>Math.abs(b-p)<Math.abs(a-p)?b:a); else p=null;
     let h=str(o.haendler); if(h && OCR_META.test(h)) h="";
     const nr=str(o.rechnungsnr).replace(/^(nr\.?|no\.?|#)\s*/i,"");
+    let notiz=str(o.notiz).replace(/\s+/g," "); if(notiz.length>120) notiz=notiz.slice(0,117).replace(/[,\s]+\S*$/,"")+" …";
+    const kat=geminiKat(str(o.kategorie));
     return { betrag: br!=null?{v:br, sicher:true}:null, datum: iso?{iso, sicher:true}:null, lieferant: h?{name:h.slice(0,60), sicher:true, quelle:"ki"}:null,
-             nr: nr?{nr:nr.slice(0,40), sicher:true}:null, satz:p };
+             nr: nr?{nr:nr.slice(0,40), sicher:true}:null, satz:p, notiz: notiz||null, kategorie: kat };
   }
+  const KAT_SYN = {"versand":"Porto/Versand","versandkosten":"Porto/Versand","porto":"Porto/Versand","paket":"Porto/Versand","büromaterial":"Büro & Software","buero":"Büro & Software","büro":"Büro & Software","software":"Büro & Software","material":"Verbrauchsmaterial","verbrauch":"Verbrauchsmaterial","teile":"Ersatzteile","ersatzteil":"Ersatzteile","werkzeuge":"Werkzeug","miete":"Miete & Nebenkosten","auto":"Fahrzeug","kfz":"Fahrzeug","tanken":"Fahrzeug","marketing":"Werbung","werbung":"Werbung"};
+  function geminiKat(v){ if(!v) return null; const l=v.toLowerCase().trim();
+    const exact=AKAT.find(k=>k.toLowerCase()===l); if(exact) return exact;
+    for(const [w,k] of Object.entries(KAT_SYN)) if(l.includes(w)) return k;
+    return AKAT.find(k=>l.includes(k.toLowerCase().split(/[ /&]/)[0])) || null; }
   async function geminiBeleg(beleg){
     if(beleg.typ==="application/pdf" && beleg.data.length > 19*1024*1024) throw new GeminiError("big","PDF zu groß");
     const r=await geminiCall([{text:geminiPrompt()}, {inline_data:await geminiImageData(beleg)}]);
@@ -1860,7 +1870,7 @@ export function startApp(){
     const setSatz=p=>{ d.satz=p; $$("#aSatz [data-satz]").forEach(z=>z.setAttribute("aria-pressed", +z.dataset.satz===p)); split(); };
     $$("#aSatz [data-satz]").forEach(b=>b.onclick=()=>{ touched.add("aSatz"); $("#aSatz").classList.remove("ocrok","ocrcheck"); setSatz(+b.dataset.satz); });
     const mark=(id,cls)=>{ const f=id==="aSatz"?$("#aSatz"):$("#"+id)?.closest(".field"); if(!f) return; f.classList.remove("ocrok","ocrcheck"); if(cls) f.classList.add(cls); };
-    ["aLief","aDatum","aBrutto","aNr"].forEach(id=>{ const el=$("#"+id); const h=()=>{ touched.add(id); mark(id,null); }; el.addEventListener("input",h); el.addEventListener("change",h); });
+    ["aLief","aDatum","aBrutto","aNr","aKat","aNotiz"].forEach(id=>{ const el=$("#"+id); const h=()=>{ touched.add(id); mark(id,null); }; el.addEventListener("input",h); el.addEventListener("change",h); });
     const ocrBar=html=>{ const b=$("#aOcr"); if(!b) return; b.hidden=!html; b.innerHTML=html||""; };
     const txtBtn=(ki)=>ocrText?`<button type="button" class="linkbtn" id="aOcrShow" data-l="${ki?"KI-Antwort zeigen":"Erkannten Text zeigen"}">${ki?"KI-Antwort zeigen":"Erkannten Text zeigen"}</button>`:"";
     const bindBar=b=>{ const sh=$("#aOcrShow"); if(sh) sh.onclick=()=>{ const pre=$("#aOcrTxt"); if(pre){ pre.remove(); sh.textContent=sh.dataset.l; } else { sh.insertAdjacentHTML("afterend", `<pre class="ocrtxt" id="aOcrTxt">${esc(ocrText)}</pre>`); sh.textContent="Text ausblenden"; } };
@@ -1893,6 +1903,8 @@ export function startApp(){
       if(r.lieferant && !touched.has("aLief") && !val("aLief")){ $("#aLief").value=r.lieferant.name; mark("aLief", r.lieferant.sicher?"ocrok":"ocrcheck"); check ||= !r.lieferant.sicher; got.push(esc(r.lieferant.name)+(r.lieferant.quelle==="verkaeufer"?" <small>(Verkäufer)</small>":"")); }
       if(r.nr && !touched.has("aNr") && !val("aNr")){ $("#aNr").value=r.nr.nr; mark("aNr", r.nr.sicher?"ocrok":"ocrcheck"); check ||= !r.nr.sicher; got.push(`Nr. <span class="mono">${esc(r.nr.nr)}</span>`); }
       if(r.satz!=null && !touched.has("aSatz")){ setSatz(r.satz); mark("aSatz","ocrok"); got.push(`${r.satz} % MwSt.`); }
+      if(r.kategorie && !touched.has("aKat")){ $("#aKat").value=r.kategorie; mark("aKat","ocrok"); got.push(esc(r.kategorie)); }
+      if(r.notiz && !touched.has("aNotiz") && !val("aNotiz")){ $("#aNotiz").value=r.notiz; mark("aNotiz","ocrok"); got.push(`„${esc(r.notiz)}“`); }
       split();
       const fehlt=[!r.betrag&&"Betrag", !r.datum&&"Datum"].filter(Boolean);
       const ok=got.length>0, ki=quelle==="ki";
