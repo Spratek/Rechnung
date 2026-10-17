@@ -1538,7 +1538,7 @@ export function startApp(){
   }
   /* Händler: Verkäufer > Briefkopf > bekannter Shop > Plattform */
   const OCR_PLATFORMS = ["Amazon","eBay","Ebay Kleinanzeigen","Kleinanzeigen","AliExpress","Alibaba","PayPal","Etsy","Temu","Wish","Back Market","refurbed","Otto","Kaufland","Shopify","Klarna"];
-  const OCR_KNOWN = ["Dr. Smartphone","Mobilesentrix","iFixit","Conrad","Reichelt","Mouser","Digi-Key","DigiKey","Farnell","RS Components","Pollin","Völkner","Voelkner","Alternate","Cyberport","Notebooksbilliger","Mindfactory","Hornbach","OBI","Bauhaus","Toom","Hagebau","MediaMarkt","Media Markt","Saturn","Würth","Lidl","Aldi","Rewe","Edeka","Netto","Penny","Rossmann","Aral","Shell","Esso","Telekom","Vodafone","Ikea","Staples","Apple","Samsung","Deutsche Post","DHL","Hermes","DPD","GLS","UPS"];
+  const OCR_KNOWN = ["Dr. SmartPHONE","Mobilesentrix","iFixit","Conrad","Reichelt","Mouser","Digi-Key","DigiKey","Farnell","RS Components","Pollin","Völkner","Voelkner","Alternate","Cyberport","Notebooksbilliger","Mindfactory","Hornbach","OBI","Bauhaus","Toom","Hagebau","MediaMarkt","Media Markt","Saturn","Würth","Lidl","Aldi","Rewe","Edeka","Netto","Penny","Rossmann","Aral","Shell","Esso","Telekom","Vodafone","Ikea","Staples","Apple","Samsung","Deutsche Post","DHL","Hermes","DPD","GLS","UPS"];
   const OCR_LEGAL = /\b(gmbh(?:\s*&\s*co\.?\s*kg)?|ag|ug(?:\s*\(haftungsbeschränkt\))?|e\.\s?k\.?|kg|ohg|gbr|ltd\.?|limited|inc\.?|llc|s\.?l\.?|b\.?v\.?|se|s\.?a\.?r\.?l\.?|co\.?,?\s*ltd\.?|corp\.?)(?![a-zäöü])/i;
   const ocrNorm = s => String(s||"").toLowerCase().replace(/ä/g,"ae").replace(/ö/g,"oe").replace(/ü/g,"ue").replace(/ß/g,"ss").replace(/[^a-z0-9]/g,"");
   function ocrHasName(line, name){
@@ -1550,27 +1550,42 @@ export function startApp(){
     s=String(s||"").replace(/^[\s:–\-•|*#]+/,"").split(/\s[|•·]\s|,\s(?!(?:ltd|inc|llc|kg|co)\b)|\s{2,}|\s[-–]\s(?=\D)|\(|\b(str\.|straße|strasse|weg|platz|allee)\b|\b\d{5}\b|tel\b|www\.|@/i)[0];
     return s.replace(/[\s.:;,–\-]+$/,"").trim().slice(0,48);
   }
+  // Zeilen, die nie ein Händlername sind: Steuer-, Bank-, Register- und Kontaktangaben
+  const OCR_META = /(ust\.?\s*[-‐]?\s*id|\bu?st\.?\s*[-‐]?\s*id\b|ust[-‐]?idnr|umsatzsteuer[-‐\s]*id|ust\.?\s*nr|steuer\s*[-‐]?\s*(nr|nummer|id)|steuernummer|vat\b|tax\s*id|iban|\bbic\b|swift|bankverbindung|\bbank\b|sparkasse|volksbank|handelsregister|\bhrb?\b|amtsgericht|registergericht|geschäftsführ|inhaber|tel\.?\b|telefon|fax|e-?mail|www\.|https?:|@|\bde\s?\d{9}\b|steuer|mwst|\bvat\b|privatverkauf|ohne\s+umsatz)/i;
+  const OCR_DOCWORD = /(rechnung|invoice|quittung|kassenbon|beleg|lieferschein|gutschrift|angebot|bestell|auftrag|kunde|datum|date|seite|page|artikel|menge|summe|betrag|zahlart|zahlung|versand|liefer|anschrift|adresse|empfänger|absender|bon\b|kasse|filiale)/i;
+  const OCR_ADDR = /(\b\d{5}\b|str\.|straße|strasse|(weg|platz|allee|gasse|ring|damm|ufer|markt|chaussee|steig|pfad)\s*\d|postfach|\bpostbox\b)/i;
   function ocrShop(text, known=[], own=[]){
     const L=ocrClean(text).split("\n").map(x=>x.trim()).filter(Boolean);
     const isOwn = line => own.some(o=>o && ocrNorm(o).length>2 && ocrNorm(line).includes(ocrNorm(o)));
     const isPlat = line => OCR_PLATFORMS.some(pl=>ocrHasName(line,pl));
+    const isMeta = line => OCR_META.test(line);
+    const letters = s => (String(s).match(/[a-zäöüß]/gi)||[]).length;
+    const plausible = v => v && v.length>=3 && letters(v)>=3 && letters(v) >= String(v).replace(/\s/g,"").length*0.5 && !isMeta(v) && !isOwn(v);
     const known2=[...known.filter(Boolean), ...OCR_KNOWN];
     const knownIn = line => known2.filter(k=>ocrHasName(line,k)).sort((a,b)=>b.length-a.length)[0];
-    // 1. „Verkauft von …“ / „Verkäufer: …“ / „Sold by …“ – der eigentliche Händler hinter Amazon, eBay & Co.
+    // 1. „Verkauft von …“ / „Verkäufer: …“ / „Sold by …“ / „Store: …“ – nur echte Namen, nie Steuer-/Bankzeilen
     for(let i=0;i<L.length;i++){
-      const m=L[i].match(/(?:verkauft\s+(?:und\s+versandt\s+)?von|verk[äa]ufer(?:in)?|anbieter|h[äa]ndler|sold\s+by|seller|vendor|shop|store)\s*[:\-]?\s*(.*)$/i);
-      if(!m || /^\s*(?:info|bewertung|nummer|nr|id|konto)/i.test(m[1])) continue;
-      let v=ocrCleanName(m[1]); if(!v || v.length<3) v=ocrCleanName(L[i+1]||"");
-      if(v && v.length>=3 && !isOwn(v) && !OCR_PLATFORMS.some(pl=>ocrNorm(pl)===ocrNorm(v))) return {name:knownIn(v)||v, quelle:"verkaeufer", sicher:true};
+      if(isMeta(L[i])) continue;
+      const m=L[i].match(/(?:verkauft\s+(?:und\s+versandt\s+)?von|verk[äa]ufer(?:in)?\s*:|sold\s+by|seller\s*:|vendor\s*:|store\s*:|shop\s*:|h[äa]ndler\s*:)\s*(.*)$/i);
+      if(!m) continue;
+      let v=ocrCleanName(m[1]); if(!plausible(v) && L[i+1] && !isMeta(L[i+1])) v=ocrCleanName(L[i+1]);
+      if(plausible(v) && !OCR_PLATFORMS.some(pl=>ocrNorm(pl)===ocrNorm(v))) return {name:knownIn(v)||v, quelle:"verkaeufer", sicher:true};
     }
-    // 2. Briefkopf (erste Zeilen): bekannter Shop oder Zeile mit Rechtsform
-    const head=L.slice(0,7).filter(l=>!isOwn(l));
+    // 2. Briefkopf (oberste Zeilen, ohne eigene Adresse und Meta-Zeilen)
+    const head=L.slice(0,6).filter(l=>!isOwn(l) && !isMeta(l)), top=L.slice(0,5).filter(l=>!isOwn(l) && !isMeta(l));
     for(const l of head){ const k=knownIn(l); if(k && !isPlat(k)) return {name:k, quelle:"kopf", sicher:true}; }
-    for(const l of head){ if(OCR_LEGAL.test(l) && !isPlat(l) && !/rechnung|invoice|kunde|an:|lieferadresse|rechnungsadresse/i.test(l)){ const v=ocrCleanName(l); if(v.length>=3 && /[a-zäöü]{2}/i.test(v)) return {name:v, quelle:"kopf", sicher:false}; } }
+    // 2b. die erste markante Textzeile ganz oben = Firmenname
+    for(const [idx,l] of top.entries()){
+      if(isPlat(l) || OCR_DOCWORD.test(l) || OCR_ADDR.test(l) || l.includes(":")) continue;
+      const v=ocrCleanName(l);
+      if(!plausible(v) || v.length>42 || /^\W*$/.test(v)) continue;
+      if(/^[A-ZÄÖÜ\s&.\-]+$/.test(v) && idx>0 && !OCR_LEGAL.test(v)) continue; // Slogan in Großbuchstaben unter dem Namen
+      return {name:v, quelle:"kopf", sicher: idx===0 || OCR_LEGAL.test(v)};
+    }
     // 3. bekannter Shop irgendwo (z. B. im Fuß oder als Web-Adresse)
-    for(const l of L){ if(isOwn(l)) continue; const k=knownIn(l); if(k) return {name:k, quelle:"bekannt", sicher:true}; }
+    for(const l of L){ if(isOwn(l)) continue; const k=knownIn(l); if(k && !isPlat(k)) return {name:k, quelle:"bekannt", sicher:true}; }
     // 3b. Rechtsform-Zeile weiter unten (Fußzeile mit Firmenangaben)
-    for(const l of L.slice(7)){ if(!isOwn(l) && OCR_LEGAL.test(l) && !isPlat(l) && !/rechnung|invoice|kunde|bank|iban|sitz|registergericht|amtsgericht|geschäftsführ/i.test(l)){ const v=ocrCleanName(l); if(v.length>=3) return {name:v, quelle:"fuss", sicher:false}; } }
+    for(const l of L.slice(6)){ if(!isOwn(l) && !isMeta(l) && OCR_LEGAL.test(l) && !isPlat(l) && !/rechnung|invoice|kunde|sitz|registergericht/i.test(l)){ const v=ocrCleanName(l.replace(/^(firmensitz|firma|sitz)\s*:?\s*/i,"")); if(plausible(v)) return {name:v, quelle:"fuss", sicher:false}; } }
     // 4. nur die Plattform
     for(const l of L){ const pl=OCR_PLATFORMS.find(x=>ocrHasName(l,x)); if(pl) return {name:pl, quelle:"plattform", sicher:false}; }
     return null;
@@ -1579,6 +1594,7 @@ export function startApp(){
   const OCR_NR_KW = [
     [/(?:rechnungs?|rg\.?)\s*[-‐]?\s*(?:nr|nummer|no|nº|n°)\b\.?/i, 10],
     [/rechnung\s*(?:nr|nummer|no|n°)?\.?\s*[:#]/i, 9],
+    [/^\s*rechnung\s+(?=[A-Za-z]{0,4}[-‐]?\d)/i, 9],
     [/\binvoice\s*(?:no|nr|number|num|#|id)\b\.?|\binvoice\s*#/i, 10],
     [/\binv\.?\s*(?:no|nr|#)|\binv\s*#/i, 9],
     [/\bre\.?\s*[-‐]?\s*nr\b\.?/i, 9],
@@ -1589,7 +1605,8 @@ export function startApp(){
     const t=String(rest||"").replace(/^[\s:#.\-–=]+/,"").match(/^([A-Za-z0-9][A-Za-z0-9\-\/._]{2,30})/);
     if(!t) return null; let v=t[1].replace(/[._\-\/]+$/,"");
     if(!/\d/.test(v) || /^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/.test(v) || v.length<3) return null;
-    v=v.replace(/(?<=\d)[oO](?=\d)/g,"0").replace(/(?<=\d)[lI|](?=\d)/g,"1");
+    v=v.replace(/(?<=\d)[oO](?=\d)/g,"0").replace(/(?<=\d)[lI|](?=\d)/g,"1").replace(/(?<=\d)S(?=\d)/g,"5")
+       .replace(/^(RE|RG|INV|AR|R)([SOIlB])(?=\d)/,(m,p,c)=>p+({S:"5",O:"0",I:"1",l:"1",B:"8"})[c]);
     return v;
   }
   function ocrInvoiceNr(text){
