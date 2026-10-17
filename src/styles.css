@@ -311,6 +311,28 @@ textarea.input{resize:vertical;line-height:1.45}
 .exrow>span{flex:1;min-width:0;display:flex;flex-direction:column}
 .exrow small{color:var(--muted);font-size:13px}
 .exrow .btn{flex:none}
+.ocrbar{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.ocrbar[hidden]{display:none}
+.ocrrow{display:flex;align-items:center;gap:12px}
+.ocrrow>span:not(.ocrspin):not(.ocrpct){flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.ocrrow small{color:var(--muted);font-size:13px;line-height:1.4}
+.ocrrow small b{color:var(--fg)}
+.ocrrow>svg{width:22px;height:22px;flex:none}
+.ocrrow.ok>svg{color:var(--green)} .ocrrow.warn>svg{color:var(--amber)} .ocrrow.err>svg{color:var(--red)} .ocrrow.idle>svg{color:var(--hi)}
+.ocrrow .btn{flex:none}
+.ocrrow u{text-decoration:none;background:var(--amber-soft);color:var(--amber);border-radius:4px;padding:0 3px;font-weight:600}
+.ocrspin{width:20px;height:20px;flex:none;border-radius:50%;border:2.5px solid var(--grey-soft);border-top-color:var(--hi);animation:ocrSpin .8s linear infinite}
+@keyframes ocrSpin{to{transform:rotate(360deg)}}
+.ocrpct{font-weight:700;color:var(--muted);font-size:14px}
+.ocrprog{height:6px;border-radius:999px;background:var(--grey-soft);overflow:hidden}
+.ocrprog i{display:block;height:100%;width:0;background:var(--hi);border-radius:inherit;transition:width .3s}
+.ocrnote{color:var(--faint);font-size:12px}
+.ocrtxt{margin:0;max-height:220px;overflow:auto;white-space:pre-wrap;font:12.5px/1.45 ui-monospace,Menlo,monospace;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px;color:var(--muted)}
+.field.ocrok{background:color-mix(in srgb,var(--hi) 9%,transparent)}
+.field.ocrcheck{background:var(--amber-soft)}
+.field.ocrok input,.field.ocrcheck input{font-weight:700}
+.field.ocrcheck label::after{content:"prüfen";margin-left:6px;font-size:11px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.04em}
+.seg.ocrok{box-shadow:0 0 0 2px color-mix(in srgb,var(--hi) 45%,transparent)}
 .kuhint svg{width:18px;height:18px;flex:none;margin-top:1px;color:var(--blue)}
 .kuhint i{font-style:normal;color:var(--muted)}
 .linkbtn{background:none;border:0;color:var(--link);font-weight:600;padding:4px 0;display:inline-flex;align-items:center;gap:6px;text-align:left}
