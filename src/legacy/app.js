@@ -81,6 +81,7 @@ export function startApp(){
     sync:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 11a8 8 0 0 0-14.3-4.6L4 8M4 13a8 8 0 0 0 14.3 4.6L20 16"/><path d="M4 4v4h4M20 20v-4h-4"/></svg>',
     plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
     copy:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>',
+    eye:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
     scan:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 9h8M8 12h8M8 15h5"/></svg>',
     cam:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
     upl:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 15V4M7 9l5-5 5 5M5 20h14"/></svg>',
@@ -409,7 +410,7 @@ export function startApp(){
     return `<div class="group"><span class="glabel">Firma &amp; Rechnung</span>
       <button class="card" data-act="firma"><div class="row"><h3>Firmendaten, Bank, Logo</h3><span class="pill ${filled===5?"s-bezahlt":"s-versendet"}">${filled===5?"Vollständig":filled+" von 5"}</span></div>
       <div class="meta">${f.name?esc(f.name)+(f.ort?" · "+esc(f.ort):""):"Erscheinen im Kopf und Fuß jeder Rechnung."}</div>
-      <div class="meta">${f.kleinunternehmer?"Kleinunternehmer (§ 19 UStG) – ohne MwSt":(f.netto?"Preise netto, zzgl. 19 % MwSt":"Preise inkl. 19 % MwSt")} · Zahlungsziel ${f.ziel??14} Tage</div></button></div>
+      <div class="meta">${f.kleinunternehmer?"Kleinunternehmer (§ 19 UStG) – ohne MwSt":(f.netto?"Preise netto, zzgl. 19 % MwSt":"Preise inkl. 19 % MwSt")} · Zahlungsziel ${f.ziel??14} Tage${f.geminiApiKey?" · KI-Belegerkennung an":""}</div></button></div>
 
       <div class="group" id="grpTexte"><span class="glabel">Textbausteine &amp; Hinweise</span>
       <button class="card" data-act="texte"><div class="row"><h4>${ico.text}Standardtexte für Belege</h4><span class="pill ${texteSet?"s-bezahlt":"s-entwurf"}">${texteSet} von 3</span></div>
@@ -1289,15 +1290,24 @@ export function startApp(){
         <div class="field"><label for="cNrJahr">Jahreszahl in Belegnummer</label><input type="checkbox" class="toggle" id="cNrJahr" ${f.nrJahr!==false?"checked":""}></div>
         <div class="kv" style="flex-direction:column;gap:6px"><span>Nächste Nummern</span><div id="nrPrev" class="mono"></div></div></div>
         <p class="help">Leer lassen = Standard. Bestehende Aufträge und Belege behalten ihre Nummer. Die laufende Nummer zählt einfach weiter, auch wenn Sie ein Kürzel ändern. Mit Jahreszahl beginnt jedes neue Jahr wieder bei 0001.</p></div>
+      <div class="group" id="grpKi"><span class="glabel">KI-Belegerkennung (Google Gemini)</span><div class="box">
+        <div class="field"><label for="cGemini">Gemini API-Key</label><input id="cGemini" type="password" class="mono" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="AIza…" value="${esc(f.geminiApiKey||"")}"><button type="button" class="eyebtn" id="cGemEye" aria-label="Key anzeigen">${ico.eye}</button></div>
+        <div class="field"><label for="cGemModel">Modell</label><input id="cGemModel" class="mono" autocapitalize="off" spellcheck="false" placeholder="gemini-flash-latest" value="${esc(f.geminiModel||"")}"></div>
+        <div class="field gemtest"><button type="button" class="btn ghost sm" id="cGemTest">Verbindung testen</button><span id="cGemRes"></span></div></div>
+        <p class="help">Mit Key liest die KI beim Erfassen einer Ausgabe Händler, Datum, Rechnungs-Nr., Betrag und MwSt. aus. Dazu wird das Foto bzw. die PDF an Google gesendet – im kostenlosen Tarif darf Google die Inhalte zur Verbesserung seiner Dienste verwenden. Ohne Key oder bei einem Fehler nutzt die App automatisch die lokale Texterkennung. Den Key erstellen Sie in Google AI Studio; er wird nicht ins Backup geschrieben. Modell leer lassen = immer das aktuelle Flash-Modell.</p></div>
       <div class="group"><span class="glabel">Standards</span><div class="box">
         <div class="field"><label for="cZiel">Zahlungsziel (Tage)</label><input id="cZiel" inputmode="numeric" value="${f.ziel??14}"></div>
         <div class="field"><label for="cPausch">Arbeitspauschale €</label><input id="cPausch" inputmode="decimal" value="${numIn(f.pauschale??39)}"></div></div></div>`, () => {
-        saveFirma({...S.firma, name:val("cName"), strasse:val("cStr"), plz:val("cPlz"), ort:val("cOrt"), tel:val("cTel"), mail:val("cMail"), ansprechpartner:val("cAnsp"), bank:val("cBank"), iban:val("cIban").toUpperCase(), bic:val("cBic").toUpperCase(), stnr:val("cStnr"), ustid:val("cUst"), kleinunternehmer:$("#cKlein").checked, netto:$("#cNetto").checked, ziel:parseInt(val("cZiel"))||14, pauschale:parseNum(val("cPausch")), logo, ...readNrForm()});
+        saveFirma({...S.firma, name:val("cName"), strasse:val("cStr"), plz:val("cPlz"), ort:val("cOrt"), tel:val("cTel"), mail:val("cMail"), ansprechpartner:val("cAnsp"), bank:val("cBank"), iban:val("cIban").toUpperCase(), bic:val("cBic").toUpperCase(), stnr:val("cStnr"), ustid:val("cUst"), kleinunternehmer:$("#cKlein").checked, netto:$("#cNetto").checked, ziel:parseInt(val("cZiel"))||14, pauschale:parseNum(val("cPausch")), logo, geminiApiKey:val("cGemini"), geminiModel:val("cGemModel"), ...readNrForm()});
         toast("Firmendaten gespeichert"); });
     const nrUpd=()=>{ const f2={...S.firma, ...readNrForm()};
       $("#nrPrev").innerHTML=[["Auftrag",nextJobNrFor(f2)],["Rechnung",nextNr("rechnung",f2)],["Angebot",nextNr("angebot",f2)],["KVA",nextNr("kva",f2)]].map(([a,b])=>`<i>${a}</i><b>${esc(b)}</b>`).join(""); };
     ["cPreJob","cPreRe","cPreAn","cPreKv"].forEach(id=>$("#"+id).oninput=nrUpd); $("#cNrJahr").onchange=nrUpd; nrUpd();
     $("#cLogo").onchange=e=>{ const file=e.target.files[0]; if(!file) return; const rd=new FileReader(); rd.onload=()=>prepareLogo(rd.result, out=>{ logo=out; $("#lPrev img").src=logo; $("#lInfo").textContent="Neues Logo – zum Übernehmen „Speichern“ tippen"; }); rd.readAsDataURL(file); };
+    $("#cGemEye").onclick=()=>{ const i=$("#cGemini"); i.type = i.type==="password" ? "text" : "password"; };
+    $("#cGemTest").onclick=async()=>{ const out=$("#cGemRes"), key=val("cGemini"); if(!key){ out.className="bad"; out.textContent="Bitte zuerst einen Key eintragen"; return; }
+      out.className=""; out.textContent="Teste …"; const t=await geminiTest(key, val("cGemModel")); if(!$("#cGemRes")) return;
+      out.className=t.ok?"good":"bad"; out.textContent = t.ok ? `✓ Verbunden (${t.model})` : `✕ ${GEMINI_MSG[t.code]||t.msg}`; };
     const ld=$("#cLogoDel"); if(ld) ld.onclick=()=>{ logo=""; $("#lPrev img").src=BRAND_LOGO; $("#lInfo").textContent="Standard: RepairMobile-Logo"; ld.remove(); };
   }
 
@@ -1630,6 +1640,93 @@ export function startApp(){
   }
   function ocrExtract(text, known=[], own=[]){ return { betrag:ocrAmount(text), datum:ocrDate(text), satz:ocrSatz(text), lieferant:ocrShop(text, known, own), nr:ocrInvoiceNr(text) }; }
 
+  /* ---------- KI-Belegerkennung: Google Gemini (Vision) ---------- */
+  // gemini-1.5-flash wurde am 29.09.2025 abgeschaltet – „gemini-flash-latest“ zeigt immer auf das aktuelle Flash-Modell
+  const GEMINI_DEFAULT = ["gemini-flash-latest", "gemini-2.5-flash"];
+  const geminiKey = () => String(S.firma.geminiApiKey||"").trim();
+  const geminiModels = () => { const m=String(S.firma.geminiModel||"").trim(); return m ? [m, ...GEMINI_DEFAULT.filter(x=>x!==m)] : GEMINI_DEFAULT; };
+  function geminiPrompt(){
+    const own=[S.firma.name, S.firma.ansprechpartner].filter(Boolean).join(", ");
+    return `Analysiere diesen Beleg/diese Rechnung und antworte AUSSCHLIESSLICH mit einem gültigen JSON-Objekt ohne Markdown-Codeblocks: {"haendler": "Name des Verkäufers/Shops", "datum": "DD.MM.YYYY", "rechnungsnr": "Rechnungsnummer", "brutto": 0.00, "mwst_prozent": 19}
+  Regeln:
+  - haendler: Firmenname des Verkäufers, meist ganz oben im Briefkopf. Nicht der Rechnungsempfänger${own?` (${own})`:""}. Bei Plattformen wie eBay, Amazon oder AliExpress den konkreten Verkäufer nehmen, falls genannt. Niemals USt-IdNr., Steuernummer, IBAN oder Adresse.
+  - datum: Rechnungs- bzw. Belegdatum (nicht Fälligkeits- oder Lieferdatum).
+  - rechnungsnr: Rechnungs- oder Belegnummer (nicht Kunden-, Bestell- oder Auftragsnummer).
+  - brutto: zu zahlender Gesamtbetrag inklusive MwSt. als Zahl mit Punkt, z. B. 20.89.
+  - mwst_prozent: 19, 7 oder 0.
+  - Unbekannte Werte: null.`;
+  }
+  async function geminiImageData(beleg){
+    if(beleg.typ==="application/pdf") return { mime_type:"application/pdf", data:beleg.data.split(",")[1] };
+    const src=OCR_SRC.get(beleg);
+    if(src){ try{ const url=URL.createObjectURL(src); try{
+        const img=await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=url; });
+        const sc=Math.min(1, 2048/Math.max(img.naturalWidth,img.naturalHeight)), c=document.createElement("canvas");
+        c.width=Math.round(img.naturalWidth*sc); c.height=Math.round(img.naturalHeight*sc);
+        const g=c.getContext("2d"); g.fillStyle="#fff"; g.fillRect(0,0,c.width,c.height); g.drawImage(img,0,0,c.width,c.height);
+        return { mime_type:"image/jpeg", data:c.toDataURL("image/jpeg",.85).split(",")[1] };
+      } finally { URL.revokeObjectURL(url); } }catch(e){} }
+    return { mime_type:"image/jpeg", data:beleg.data.split(",")[1] };
+  }
+  class GeminiError extends Error{ constructor(code, msg){ super(msg); this.code=code; } }
+  const GEMINI_MSG = { key:"API-Key ungültig oder ohne Berechtigung", quota:"Kontingent erschöpft – bitte später erneut", net:"Keine Verbindung zu Google", timeout:"Zeitüberschreitung", model:"Modell nicht verfügbar", parse:"Antwort nicht lesbar", big:"Datei zu groß für die KI", fail:"Unbekannter Fehler" };
+  async function geminiCall(parts, {json=true, timeout=45000, key=geminiKey(), models=geminiModels()}={}){
+    if(!key) throw new GeminiError("nokey","Kein API-Key");
+    const body={ contents:[{role:"user", parts}], generationConfig:{ temperature:0 } };
+    if(json) Object.assign(body.generationConfig, { responseMimeType:"application/json", responseSchema:{ type:"OBJECT", properties:{
+      haendler:{type:"STRING", nullable:true}, datum:{type:"STRING", nullable:true}, rechnungsnr:{type:"STRING", nullable:true},
+      brutto:{type:"NUMBER", nullable:true}, mwst_prozent:{type:"NUMBER", nullable:true} } } });
+    let last=null;
+    for(const model of models){
+      const ctl=new AbortController(), t=setTimeout(()=>ctl.abort(), timeout);
+      let res;
+      try{ res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,
+        { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body), signal:ctl.signal }); }
+      catch(e){ clearTimeout(t); throw new GeminiError(e.name==="AbortError"?"timeout":"net", e.message); }
+      clearTimeout(t);
+      if(res.ok){ const data=await res.json().catch(()=>null);
+        const text=(data?.candidates?.[0]?.content?.parts||[]).map(p=>p.text||"").join("").trim();
+        if(!text) throw new GeminiError("parse", data?.promptFeedback?.blockReason || "leere Antwort");
+        return {text, model}; }
+      const err=await res.json().catch(()=>({})); const msg=err?.error?.message||res.statusText;
+      if(res.status===404 || /not found|not supported|is not available/i.test(msg)){ last=new GeminiError("model", msg); continue; }
+      if(res.status===400 && /api key|api_key/i.test(msg) || res.status===401 || res.status===403) throw new GeminiError("key", msg);
+      if(res.status===429) throw new GeminiError("quota", msg);
+      if(res.status===413 || /too large|exceeds/i.test(msg)) throw new GeminiError("big", msg);
+      throw new GeminiError("fail", `${res.status}: ${msg}`);
+    }
+    throw last || new GeminiError("model","Kein Modell erreichbar");
+  }
+  function geminiParse(text){
+    let t=String(text||"").replace(/^```(?:json)?\s*/i,"").replace(/```\s*$/,"").trim();
+    const a=t.indexOf("{"), b=t.lastIndexOf("}"); if(a<0||b<a) throw new GeminiError("parse","kein JSON");
+    let o; try{ o=JSON.parse(t.slice(a,b+1)); }catch(e){ throw new GeminiError("parse", e.message); }
+    const str=v=> (v==null || /^(null|unbekannt|n\/a|-)$/i.test(String(v).trim())) ? "" : String(v).trim();
+    // Datum: DD.MM.YYYY, D.M.YY oder YYYY-MM-DD
+    let iso=null; const ds=str(o.datum); let m;
+    if((m=ds.match(/^(\d{1,2})\.\s?(\d{1,2})\.\s?(\d{2,4})$/))){ let y=+m[3]; if(y<100) y+=2000; iso=`${y}-${pad(+m[2])}-${pad(+m[1])}`; }
+    else if((m=ds.match(/^(\d{4})-(\d{2})-(\d{2})/))) iso=`${m[1]}-${m[2]}-${m[3]}`;
+    if(iso){ const d=new Date(iso+"T12:00"); if(isNaN(d) || isoDay(d)!==iso || d>new Date(Date.now()+2*864e5)) iso=null; }
+    let br = typeof o.brutto==="number" ? o.brutto : (str(o.brutto) ? parseNum(str(o.brutto).replace(/[^\d,.\-]/g,"")) : NaN);
+    br = isFinite(br) && br>0 ? r2(br) : null;
+    let p = o.mwst_prozent==null || o.mwst_prozent==="" ? null : parseFloat(String(o.mwst_prozent).replace(",","."));
+    if(p!=null && isFinite(p)) p=[19,7,0].reduce((a,b)=>Math.abs(b-p)<Math.abs(a-p)?b:a); else p=null;
+    let h=str(o.haendler); if(h && OCR_META.test(h)) h="";
+    const nr=str(o.rechnungsnr).replace(/^(nr\.?|no\.?|#)\s*/i,"");
+    return { betrag: br!=null?{v:br, sicher:true}:null, datum: iso?{iso, sicher:true}:null, lieferant: h?{name:h.slice(0,60), sicher:true, quelle:"ki"}:null,
+             nr: nr?{nr:nr.slice(0,40), sicher:true}:null, satz:p };
+  }
+  async function geminiBeleg(beleg){
+    if(beleg.typ==="application/pdf" && beleg.data.length > 19*1024*1024) throw new GeminiError("big","PDF zu groß");
+    const r=await geminiCall([{text:geminiPrompt()}, {inline_data:await geminiImageData(beleg)}]);
+    return { ...geminiParse(r.text), model:r.model, raw:r.text };
+  }
+  async function geminiTest(key, model){
+    const models = model ? [model, ...GEMINI_DEFAULT.filter(x=>x!==model)] : GEMINI_DEFAULT;
+    try{ const r=await geminiCall([{text:"Antworte nur mit dem Wort OK."}], {json:false, timeout:20000, key:String(key||"").trim(), models}); return {ok:true, model:r.model}; }
+    catch(e){ return {ok:false, code:e.code, msg:e.message}; }
+  }
+
   /* ---------- Ausgaben & Beleg-Scan (Eingangsrechnungen) ---------- */
   const AKAT = ["Ersatzteile","Werkzeug","Porto/Versand","Verbrauchsmaterial","Büro & Software","Miete & Nebenkosten","Fahrzeug","Werbung","Sonstiges"];
   const AKAT_C = {"Ersatzteile":"#29aae1","Werkzeug":"#e8912d","Porto/Versand":"#8b6fd6","Verbrauchsmaterial":"#2fa36b","Büro & Software":"#4a6fa5","Miete & Nebenkosten":"#c4507a","Fahrzeug":"#7a8a99","Werbung":"#d6b12f","Sonstiges":"#98a2ad"};
@@ -1765,21 +1862,32 @@ export function startApp(){
     const mark=(id,cls)=>{ const f=id==="aSatz"?$("#aSatz"):$("#"+id)?.closest(".field"); if(!f) return; f.classList.remove("ocrok","ocrcheck"); if(cls) f.classList.add(cls); };
     ["aLief","aDatum","aBrutto","aNr"].forEach(id=>{ const el=$("#"+id); const h=()=>{ touched.add(id); mark(id,null); }; el.addEventListener("input",h); el.addEventListener("change",h); });
     const ocrBar=html=>{ const b=$("#aOcr"); if(!b) return; b.hidden=!html; b.innerHTML=html||""; };
-    const txtBtn=()=>ocrText?`<button type="button" class="linkbtn" id="aOcrShow">Erkannten Text zeigen</button>`:"";
-    const bindBar=b=>{ const sh=$("#aOcrShow"); if(sh) sh.onclick=()=>{ const pre=$("#aOcrTxt"); if(pre){ pre.remove(); sh.textContent="Erkannten Text zeigen"; } else { sh.insertAdjacentHTML("afterend", `<pre class="ocrtxt" id="aOcrTxt">${esc(ocrText)}</pre>`); sh.textContent="Text ausblenden"; } };
+    const txtBtn=(ki)=>ocrText?`<button type="button" class="linkbtn" id="aOcrShow" data-l="${ki?"KI-Antwort zeigen":"Erkannten Text zeigen"}">${ki?"KI-Antwort zeigen":"Erkannten Text zeigen"}</button>`:"";
+    const bindBar=b=>{ const sh=$("#aOcrShow"); if(sh) sh.onclick=()=>{ const pre=$("#aOcrTxt"); if(pre){ pre.remove(); sh.textContent=sh.dataset.l; } else { sh.insertAdjacentHTML("afterend", `<pre class="ocrtxt" id="aOcrTxt">${esc(ocrText)}</pre>`); sh.textContent="Text ausblenden"; } };
       const re=$("#aOcrGo"); if(re) re.onclick=()=>{ touched.clear(); runOcr(b); }; };
-    const ocrIdle=b=>{ if(!b){ ocrBar(""); return; } ocrBar(`<div class="ocrrow idle">${ico.scan}<span><b>Beleg automatisch auslesen</b><small>Betrag, Datum, Händler und Rechnungs-Nr. vom Beleg übernehmen</small></span><button type="button" class="btn ghost sm" id="aOcrGo">Auslesen</button></div>${txtBtn()}`); bindBar(b); };
-    const runOcr=async b=>{
+    const ocrIdle=b=>{ if(!b){ ocrBar(""); return; } ocrBar(`<div class="ocrrow idle">${ico.scan}<span><b>Beleg automatisch auslesen${geminiKey()?' <i class="kibadge">KI</i>':""}</b><small>Betrag, Datum, Händler und Rechnungs-Nr. vom Beleg übernehmen</small></span><button type="button" class="btn ghost sm" id="aOcrGo">Auslesen</button></div>${txtBtn()}`); bindBar(b); };
+    const runOcr=async (b, opts={})=>{
       if(!b){ ocrTok++; ocrBar(""); return; }
       const tok=++ocrTok, live=()=>tok===ocrTok && !!$("#aOcr");
-      ocrBar(`<div class="ocrrow run"><span class="ocrspin" aria-hidden="true"></span><span><b>Beleg wird ausgelesen …</b><small id="aOcrMsg">${b.typ==="application/pdf"?"PDF wird geöffnet":"Texterkennung wird gestartet"}</small></span><span class="ocrpct num" id="aOcrPct">0 %</span></div><div class="ocrprog"><i id="aOcrProg"></i></div><small class="ocrnote">Läuft auf Ihrem Gerät – Sie können währenddessen schon tippen.</small>`);
-      const prog=(p,msg)=>{ if(!live()) return; const pc=Math.max(0,Math.min(100,Math.round(p*100))); const a=$("#aOcrPct"), g=$("#aOcrProg"), m=$("#aOcrMsg"); if(a) a.textContent=pc+" %"; if(g) g.style.width=pc+"%"; if(msg&&m) m.textContent=msg; };
-      let res;
-      try{ res=await ocrBeleg(b, prog); }
-      catch(e){ if(!live()) return; ocrBar(`<div class="ocrrow err">${ico.scan}<span><b>Automatisches Auslesen nicht möglich</b><small>${navigator.onLine===false?"Keine Internetverbindung – die Texterkennung wird beim ersten Mal geladen.":"Die Texterkennung konnte nicht gestartet werden."} Bitte Betrag und Datum von Hand eintragen.</small></span><button type="button" class="btn ghost sm" id="aOcrGo">Nochmal</button></div>`); bindBar(b); return; }
-      if(!live()) return;
-      ocrText=(res.text||"").trim().slice(0,4000);
-      const r=ocrExtract(res.text, lief, [S.firma.name, S.firma.ansprechpartner, "RepairMobile"]); const got=[]; let check=false;
+      let r=null, quelle="lokal", kiHinweis="";
+      if(geminiKey() && !opts.lokal){
+        ocrBar(`<div class="ocrrow run ki"><span class="ocrspin" aria-hidden="true"></span><span><b>KI liest den Beleg … <i class="kibadge">KI</i></b><small>Google Gemini sucht Händler, Datum, Rechnungs-Nr., Betrag und MwSt.</small></span></div><div class="ocrprog indet"><i></i></div><small class="ocrnote">Sie können währenddessen schon tippen.</small>`);
+        try{ const g=await geminiBeleg(b); if(!live()) return;
+          if(g.betrag||g.datum||g.lieferant||g.nr){ r=g; quelle="ki"; ocrText=g.raw; } else kiHinweis="Die KI hat auf dem Beleg nichts Eindeutiges gefunden"; }
+        catch(e){ if(!live()) return; if(e.code!=="nokey") kiHinweis="KI nicht verfügbar: "+(GEMINI_MSG[e.code]||e.message); }
+      }
+      const kiNote = kiHinweis ? `<small class="ocrnote kiwarn">${esc(kiHinweis)} – lokale Texterkennung verwendet.</small>` : "";
+      if(!r){
+        ocrBar(`<div class="ocrrow run"><span class="ocrspin" aria-hidden="true"></span><span><b>Beleg wird ausgelesen …</b><small id="aOcrMsg">${b.typ==="application/pdf"?"PDF wird geöffnet":"Texterkennung wird gestartet"}</small></span><span class="ocrpct num" id="aOcrPct">0 %</span></div><div class="ocrprog"><i id="aOcrProg"></i></div>${kiNote||`<small class="ocrnote">Läuft auf Ihrem Gerät – Sie können währenddessen schon tippen.</small>`}`);
+        const prog=(p,msg)=>{ if(!live()) return; const pc=Math.max(0,Math.min(100,Math.round(p*100))); const a=$("#aOcrPct"), g=$("#aOcrProg"), m=$("#aOcrMsg"); if(a) a.textContent=pc+" %"; if(g) g.style.width=pc+"%"; if(msg&&m) m.textContent=msg; };
+        let res;
+        try{ res=await ocrBeleg(b, prog); }
+        catch(e){ if(!live()) return; ocrBar(`<div class="ocrrow err">${ico.scan}<span><b>Automatisches Auslesen nicht möglich</b><small>${navigator.onLine===false?"Keine Internetverbindung – die Texterkennung wird beim ersten Mal geladen.":"Die Texterkennung konnte nicht gestartet werden."} Bitte Betrag und Datum von Hand eintragen.</small></span><button type="button" class="btn ghost sm" id="aOcrGo">Nochmal</button></div>${kiNote}`); bindBar(b); return; }
+        if(!live()) return;
+        ocrText=(res.text||"").trim().slice(0,4000);
+        r=ocrExtract(res.text, lief, [S.firma.name, S.firma.ansprechpartner, "RepairMobile"]);
+      }
+      const got=[]; let check=false;
       if(r.betrag && !touched.has("aBrutto")){ $("#aBrutto").value=r.betrag.v.toFixed(2).replace(".",","); mark("aBrutto", r.betrag.sicher?"ocrok":"ocrcheck"); check ||= !r.betrag.sicher; got.push(`<b class="num">${eur(r.betrag.v)}</b>`); }
       if(r.datum && !touched.has("aDatum")){ $("#aDatum").value=r.datum.iso; mark("aDatum", r.datum.sicher?"ocrok":"ocrcheck"); check ||= !r.datum.sicher; got.push(deDate(r.datum.iso)); }
       if(r.lieferant && !touched.has("aLief") && !val("aLief")){ $("#aLief").value=r.lieferant.name; mark("aLief", r.lieferant.sicher?"ocrok":"ocrcheck"); check ||= !r.lieferant.sicher; got.push(esc(r.lieferant.name)+(r.lieferant.quelle==="verkaeufer"?" <small>(Verkäufer)</small>":"")); }
@@ -1787,8 +1895,9 @@ export function startApp(){
       if(r.satz!=null && !touched.has("aSatz")){ setSatz(r.satz); mark("aSatz","ocrok"); got.push(`${r.satz} % MwSt.`); }
       split();
       const fehlt=[!r.betrag&&"Betrag", !r.datum&&"Datum"].filter(Boolean);
-      const ok=got.length>0;
-      ocrBar(`<div class="ocrrow ${ok?(check||fehlt.length?"warn":"ok"):"err"}">${ok?ico.check:ico.scan}<span><b>${ok?"Automatisch erkannt":"Nichts Eindeutiges erkannt"}</b><small>${ok?got.join(" · "):"Der Text war zu undeutlich."}${fehlt.length&&ok?` – ${fehlt.join(" und ")} bitte selbst eintragen`:""}${check?" – <u>gelb markierte</u> Werte bitte prüfen":""}${!ok?" Bitte von Hand eintragen.":""}</small></span><button type="button" class="btn ghost sm" id="aOcrGo">Neu lesen</button></div>${txtBtn()}`);
+      const ok=got.length>0, ki=quelle==="ki";
+      const title = ok ? (ki?`Von der KI erkannt <i class="kibadge">KI</i>`:"Automatisch erkannt") : "Nichts Eindeutiges erkannt";
+      ocrBar(`<div class="ocrrow ${ok?(check||fehlt.length?"warn":"ok"):"err"}${ki?" ki":""}">${ok?ico.check:ico.scan}<span><b>${title}</b><small>${ok?got.join(" · "):"Der Text war zu undeutlich."}${fehlt.length&&ok?` – ${fehlt.join(" und ")} bitte selbst eintragen`:""}${check?" – <u>gelb markierte</u> Werte bitte prüfen":""}${!ok?" Bitte von Hand eintragen.":""}</small></span><button type="button" class="btn ghost sm" id="aOcrGo">Neu lesen</button></div>${kiNote}${ki?`<small class="ocrnote">Bitte kurz gegenprüfen – auch KI kann sich verlesen.</small>`:""}${txtBtn(ki)}`);
       bindBar(b);
     };
     const bindPrev=()=>{
@@ -2318,7 +2427,7 @@ export function startApp(){
   const BACKUP_APP = "repairmobile-werkbank";
   async function exportBackup(){
     const belegBilder={}; for(const x of S.ausgaben) if(x.bild){ const b=await BILD.get(x.id); if(b) belegBilder[x.id]=b; }
-    const data = { app:BACKUP_APP, version:2, exportiert:nowStamp(), firma:S.firma, kunden:S.kunden, auftraege:S.auftraege, rechnungen:S.rechnungen, teile:S.teile, ausgaben:S.ausgaben, belegBilder };
+    const data = { app:BACKUP_APP, version:2, exportiert:nowStamp(), firma:{...S.firma, geminiApiKey:undefined}, kunden:S.kunden, auftraege:S.auftraege, rechnungen:S.rechnungen, teile:S.teile, ausgaben:S.ausgaben, belegBilder };
     const filename = `repairmobile-backup-${today()}.json`;
     saveFile(filename, new Blob([JSON.stringify(data, null, 2)], {type:"application/json"}), `Backup gespeichert: ${filename}`);
   }
@@ -2344,7 +2453,7 @@ export function startApp(){
   async function applyBackup(data){
     if(!data) return;
     UI.pendingImport = null;
-    S.firma = {...data.firma};
+    S.firma = {...data.firma, geminiApiKey: data.firma.geminiApiKey || S.firma.geminiApiKey || "", geminiModel: data.firma.geminiModel || S.firma.geminiModel || ""};
     for(const c of COLLS) S[c] = data[c].map(o=>({...o}));
     try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
     render();
