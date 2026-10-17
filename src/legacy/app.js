@@ -81,6 +81,7 @@ export function startApp(){
     sync:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 11a8 8 0 0 0-14.3-4.6L4 8M4 13a8 8 0 0 0 14.3 4.6L20 16"/><path d="M4 4v4h4M20 20v-4h-4"/></svg>',
     plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
     copy:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>',
+    scan:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 9h8M8 12h8M8 15h5"/></svg>',
     cam:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
     upl:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 15V4M7 9l5-5 5 5M5 20h14"/></svg>',
     dl:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
@@ -1411,6 +1412,139 @@ export function startApp(){
       <p class="help">„Hallo ${esc(k.name)}, Ihr ${esc((a.geraet||"Gerät").split(/\s[–-]\s/)[0])} ist fertig repariert …“</p></div>`;
   }
 
+  /* ---------- OCR-Engine: Tesseract.js (Fotos) + pdf.js (PDFs), läuft lokal im Browser ---------- */
+  const OCR_CDN = {
+    tess:"https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js",
+    worker:"https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js",
+    core:"https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1",
+    pdf:"https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js",
+    pdfWorker:"https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"
+  };
+  const OCR_SRC = new WeakMap();   // Beleg → Originaldatei (volle Auflösung fürs Auslesen)
+  const SCRIPTS = {};
+  function loadScript(src){
+    return SCRIPTS[src] ||= new Promise((res,rej)=>{ const s=document.createElement("script"); s.src=src; s.async=true;
+      s.onload=()=>res(); s.onerror=()=>{ delete SCRIPTS[src]; s.remove(); rej(new Error("Skript nicht ladbar")); }; document.head.appendChild(s); });
+  }
+  const withTimeout = (p, ms, msg) => Promise.race([p, new Promise((_,rej)=>setTimeout(()=>rej(new Error(msg)), ms))]);
+  let OCR_W=null, OCR_LOG=null;
+  function ocrWorker(){
+    if(!OCR_W) OCR_W = withTimeout((async()=>{
+      await loadScript(OCR_CDN.tess);
+      if(!window.Tesseract?.createWorker) throw new Error("Tesseract fehlt");
+      return await window.Tesseract.createWorker("deu", 1, { workerPath:OCR_CDN.worker, corePath:OCR_CDN.core, logger:m=>OCR_LOG?.(m) });
+    })(), 120000, "Texterkennung lädt zu lange").catch(e=>{ OCR_W=null; throw e; });
+    return OCR_W;
+  }
+  // Foto für die Erkennung vorbereiten: groß genug, Graustufen, etwas mehr Kontrast
+  async function ocrCanvasFromImage(src){
+    const url = typeof src==="string" ? src : URL.createObjectURL(src);
+    try{
+      const img=await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=url; });
+      const sc=Math.min(1, 2200/Math.max(img.naturalWidth,img.naturalHeight)), c=document.createElement("canvas");
+      c.width=Math.round(img.naturalWidth*sc); c.height=Math.round(img.naturalHeight*sc);
+      const g=c.getContext("2d"); g.filter="grayscale(1) contrast(1.35)"; g.fillStyle="#fff"; g.fillRect(0,0,c.width,c.height); g.drawImage(img,0,0,c.width,c.height);
+      return c;
+    } finally { if(typeof src!=="string") URL.revokeObjectURL(url); }
+  }
+  function dataUrlBytes(d){ const b=atob(d.split(",")[1]); const u=new Uint8Array(b.length); for(let i=0;i<b.length;i++) u[i]=b.charCodeAt(i); return u; }
+  function pdfLines(items){
+    const rows=[]; for(const it of items){ if(!it.str || !it.str.trim()) continue; const y=it.transform[5], x=it.transform[4];
+      let r=rows.find(r=>Math.abs(r.y-y)<3); if(!r){ r={y, parts:[]}; rows.push(r); } r.parts.push({x, s:it.str}); }
+    return rows.sort((a,b)=>b.y-a.y).map(r=>r.parts.sort((a,b)=>a.x-b.x).map(p=>p.s).join(" ").replace(/\s+/g," ").trim());
+  }
+  async function ocrPdf(dataUrl, prog){
+    await withTimeout(loadScript(OCR_CDN.pdf), 30000, "PDF-Leser lädt nicht");
+    const pdfjs=window.pdfjsLib; pdfjs.GlobalWorkerOptions.workerSrc=OCR_CDN.pdfWorker;
+    const doc=await pdfjs.getDocument({data:dataUrlBytes(dataUrl)}).promise; let text="";
+    for(let p=1;p<=Math.min(doc.numPages,3);p++){ const pg=await doc.getPage(p); text+=pdfLines((await pg.getTextContent()).items).join("\n")+"\n"; }
+    if(text.replace(/\s/g,"").length>40){ prog?.(1, "PDF-Text gelesen"); return {text, quelle:"pdf"}; }
+    // gescannte PDF ohne Textebene → Seite 1 als Bild auslesen
+    const pg=await doc.getPage(1), vp=pg.getViewport({scale:2.2}), c=document.createElement("canvas");
+    c.width=vp.width; c.height=vp.height; await pg.render({canvasContext:c.getContext("2d"), viewport:vp}).promise;
+    return {text:await ocrRecognize(c, prog), quelle:"scan"};
+  }
+  async function ocrRecognize(canvas, prog){
+    OCR_LOG = m => { if(!prog) return;
+      if(m.status==="recognizing text") prog(.35+.65*(m.progress||0), "Text wird gelesen");
+      else if(/load|initializ/i.test(m.status||"")) prog(.05+.3*(m.progress||0), /language|traineddata/i.test(m.status)?"Deutsch-Wörterbuch wird geladen":"Texterkennung wird geladen"); };
+    const w=await ocrWorker();
+    const r=await withTimeout(w.recognize(canvas), 120000, "Auslesen dauert zu lange");
+    return r?.data?.text || "";
+  }
+  async function ocrBeleg(beleg, prog){
+    if(beleg.typ==="application/pdf") return ocrPdf(beleg.data, prog);
+    let c; try{ c=await ocrCanvasFromImage(OCR_SRC.get(beleg) || beleg.data); }catch(e){ c=await ocrCanvasFromImage(beleg.data); }
+    return {text:await ocrRecognize(c, prog), quelle:"foto"};
+  }
+
+  /* ---------- Beleg-Texterkennung: Betrag, Datum, MwSt., Händler aus OCR-Text ---------- */
+  const OCR_MON = {jan:1,januar:1,feb:2,februar:2,"mär":3,maer:3,mar:3,"märz":3,maerz:3,apr:4,april:4,mai:5,jun:6,juni:6,jul:7,juli:7,aug:8,august:8,sep:9,sept:9,september:9,okt:10,oktober:10,oct:10,nov:11,november:11,dez:12,dezember:12,dec:12};
+  const OCR_SHOPS = ["Amazon","DHL","Deutsche Post","Hermes","DPD","GLS","UPS","Hornbach","OBI","Bauhaus","Toom","Hagebau","Mobilesentrix","iFixit","Conrad","Reichelt","MediaMarkt","Media Markt","Saturn","Würth","Kaufland","Lidl","Aldi","Rewe","Edeka","Netto","Penny","dm","Rossmann","Müller","Aral","Shell","Esso","Jet","Total","Telekom","Vodafone","O2","Ikea","Staples","Otto","eBay","PayPal","Apple","Samsung","Ebay Kleinanzeigen"];
+  function ocrClean(t){ return String(t||"").replace(/\r/g,"").replace(/[‚„]/g,",").replace(/[€]/g," € ").replace(/[ \t]+/g," "); }
+  // Geldbeträge in einer Zeile: 1.234,56 | 1234,56 | 12.50 | 12, 50 | -12,50
+  function ocrMoney(line){
+    const out=[]; const rx=/(^|[^\d,.])(-?\d{1,3}(?:[.\s']\d{3})+|-?\d+)\s?[,.]\s?(\d{2})(?![\d%])/g; let m;
+    while((m=rx.exec(line))){ const whole=m[2].replace(/[.\s']/g,""); const v=parseFloat(whole+"."+m[3]); if(isFinite(v) && Math.abs(v)<1e6) out.push({v, i:m.index}); }
+    return out;
+  }
+  const OCR_STRONG = /(gesamtbetrag|gesamt\s*betrag|gesamtsumme|zu\s*zahlen|zahlbetrag|endbetrag|endsumme|rechnungsbetrag|bruttobetrag|gesamt\s*brutto|brutto\s*gesamt|summe\s*brutto|total|gesamt|summe\s*eur|^\s*summe|betrag\s*eur)/i;
+  const OCR_WEAK = /(summe|betrag|bar\b|ec[- ]?karte|kartenzahlung|girocard|visa|mastercard|maestro|paypal|bezahlt|zahlung)/i;
+  const OCR_BAD = /(netto|mwst|ust\b|ust\.|umsatzsteuer|steuer|rückgeld|rueckgeld|zurück|wechselgeld|gegeben|rabatt|ersparnis|gespart|pfand|zwischensumme|subtotal|stk|x\s*\d|einzelpreis|ust-?id|tel\b|fax|iban|bic|plz)/i;
+  const ocrKw = line => line.toLowerCase().replace(/rn/g,"m").replace(/nn/g,"mm").replace(/sunme|surnme/g,"summe").replace(/([a-zäöü])0|0([a-zäöü])/g,(m,a,b)=>a?a+"o":"o"+b).replace(/([a-zäöü])[1l|]([a-zäöü])/g,"$1l$2");
+  function ocrAmount(text){
+    const L=ocrClean(text).split("\n").map(s=>s.trim()).filter(Boolean);
+    const cand=[];
+    L.forEach((line,i)=>{
+      const vals=ocrMoney(line).filter(x=>x.v>0);
+      const kw=ocrKw(line); const strong=OCR_STRONG.test(kw), weak=OCR_WEAK.test(kw), bad=OCR_BAD.test(kw) && !/gesamt|zu\s*zahlen|endbetrag|rechnungsbetrag/i.test(kw);
+      if(vals.length){ const v=vals[vals.length-1].v; let s=strong?10:weak?5:0; if(bad) s-=8; if(/€|eur/i.test(line)) s+=1; cand.push({v, s, i, line}); }
+      else if(strong && !bad && L[i+1] && !OCR_BAD.test(ocrKw(L[i+1]))){ const nx=ocrMoney(L[i+1]).filter(x=>x.v>0); if(nx.length) cand.push({v:nx[nx.length-1].v, s:8, i, line:line+" "+L[i+1]}); }
+    });
+    if(!cand.length) return null;
+    const good=cand.filter(c=>c.s>=8);
+    if(good.length){
+      // mehrere Summenzeilen: der höchste Betrag mit gutem Schlüsselwort (Gesamt > Zwischensumme), bei Gleichstand die späteste
+      const best=good.reduce((a,b)=> b.v>a.v+0.001 ? b : (Math.abs(b.v-a.v)<0.001 && b.i>a.i ? b : a));
+      return {v:r2(best.v), sicher:true, zeile:best.line};
+    }
+    const weak=cand.filter(c=>c.s>=5);
+    if(weak.length){ const best=weak.reduce((a,b)=>b.v>=a.v?b:a); return {v:r2(best.v), sicher:false, zeile:best.line}; }
+    const pool=cand.filter(c=>c.s>=0); if(!pool.length) return null;
+    const best=pool.reduce((a,b)=>b.v>=a.v?b:a); return {v:r2(best.v), sicher:false, zeile:best.line};
+  }
+  function ocrDate(text, now=new Date()){
+    const T=ocrClean(text); const L=T.split("\n");
+    const maxD=new Date(now.getTime()+2*864e5), minY=now.getFullYear()-6;
+    const mk=(d,m,y)=>{ y=+y; if(y<100) y+=2000; d=+d; m=+m; const dt=new Date(y,m-1,d,12); if(dt.getMonth()!==m-1 || dt.getDate()!==d || y<minY || dt>maxD) return null; return `${y}-${pad(m)}-${pad(d)}`; };
+    const found=[];
+    L.forEach((line,i)=>{
+      const add=(iso)=>{ if(!iso) return; let s=0; if(/(rechnungs|beleg|kauf|liefer|leistungs)?datum|date|vom\b/i.test(line)) s+=5; if(/rechnungsdatum|belegdatum/i.test(line)) s+=3; if(/fällig|faellig|zahlbar|gültig|gueltig|mhd|bis\b|ablauf|geburts/i.test(line)) s-=8; if(/\d{1,2}:\d{2}/.test(line)) s+=2; found.push({iso,s,i}); };
+      let m; const r1=/(?<!\d)(\d{1,2})\s?[.\/-]\s?(\d{1,2})\s?[.\/-]\s?(\d{4}|\d{2})(?!\d)/g;
+      while((m=r1.exec(line))) add(mk(m[1],m[2],m[3]));
+      const r2x=/(?<!\d)(20\d{2})-(\d{2})-(\d{2})(?!\d)/g; while((m=r2x.exec(line))) add(mk(m[3],m[2],m[1]));
+      const r3=/(?<!\d)(\d{1,2})\.?\s+([A-Za-zäÄ]{3,9})\.?\s+(\d{4})/g; while((m=r3.exec(line))){ const mo=OCR_MON[m[2].toLowerCase()]; if(mo) add(mk(m[1],mo,m[3])); }
+    });
+    if(!found.length) return null;
+    const best=found.reduce((a,b)=>b.s>a.s?b:a);
+    return {iso:best.iso, sicher: best.s>=5 || new Set(found.map(f=>f.iso)).size===1};
+  }
+  function ocrSatz(text){
+    const T=ocrClean(text).toLowerCase();
+    const has=p=>new RegExp(`(?<![\\d,])${p}(?:[,.]0{1,2})?\\s?%`).test(T);
+    const s19=has(19), s7=has(7);
+    if(s19) return 19; if(s7) return 7;
+    if(/§\s*19\s*ustg|ohne\s+(mwst|umsatzsteuer)|kleinunternehmer/.test(T)) return 0;
+    return null;
+  }
+  function ocrShop(text, known=[]){
+    const T=ocrClean(text); const low=T.toLowerCase();
+    const list=[...known, ...OCR_SHOPS].filter(Boolean);
+    const hit=list.map(n=>({n, i:low.search(new RegExp(`(^|[^a-zäöü])${n.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}([^a-zäöü]|$)`))})).filter(x=>x.i>=0).sort((a,b)=>a.i-b.i || b.n.length-a.n.length);
+    return hit.length ? hit[0].n : null;
+  }
+  function ocrExtract(text, known){ return { betrag:ocrAmount(text), datum:ocrDate(text), satz:ocrSatz(text), lieferant:ocrShop(text, known) }; }
+
   /* ---------- Ausgaben & Beleg-Scan (Eingangsrechnungen) ---------- */
   const AKAT = ["Ersatzteile","Werkzeug","Porto/Versand","Verbrauchsmaterial","Büro & Software","Miete & Nebenkosten","Fahrzeug","Werbung","Sonstiges"];
   const AKAT_C = {"Ersatzteile":"#29aae1","Werkzeug":"#e8912d","Porto/Versand":"#8b6fd6","Verbrauchsmaterial":"#2fa36b","Büro & Software":"#4a6fa5","Miete & Nebenkosten":"#c4507a","Fahrzeug":"#7a8a99","Werbung":"#d6b12f","Sonstiges":"#98a2ad"};
@@ -1457,7 +1591,7 @@ export function startApp(){
     const isPdf = file.type==="application/pdf" || /\.pdf$/i.test(file.name||"");
     if(isPdf){ if(file.size>15*1048576){ toast("PDF ist zu groß (max. 15 MB)"); return null; } return { typ:"application/pdf", data:await readDataUrl(file), name:file.name||"Beleg.pdf", size:file.size }; }
     if(!/^image\//.test(file.type||"") && !/\.(jpe?g|png|heic|heif|webp)$/i.test(file.name||"")){ toast("Bitte ein Foto oder eine PDF wählen"); return null; }
-    try{ const data=await compressImage(file); return { typ:"image/jpeg", data, name:(file.name||"Beleg").replace(/\.\w+$/,"")+".jpg", size:Math.round(data.length*.75) }; }
+    try{ const data=await compressImage(file); const b={ typ:"image/jpeg", data, name:(file.name||"Beleg").replace(/\.\w+$/,"")+".jpg", size:Math.round(data.length*.75) }; OCR_SRC.set(b, file); return b; }
     catch(e){ toast("Dieses Bildformat kann nicht gelesen werden"); return null; }
   }
 
@@ -1466,7 +1600,7 @@ export function startApp(){
     if($("#belegCam")) return;
     document.body.insertAdjacentHTML("beforeend", `<input type="file" id="belegCam" accept="image/*" capture="environment" hidden><input type="file" id="belegFile" accept="image/*,application/pdf,.pdf" hidden>`);
     for(const id of ["belegCam","belegFile"]) $("#"+id).onchange = async e => { const f=e.target.files?.[0]; e.target.value=""; if(!f || !belegCb) return; const cb=belegCb; belegCb=null;
-      toast(f.type==="application/pdf"?"PDF wird gelesen …":"Foto wird verkleinert …"); const b=await fileToBeleg(f); if(b) cb(b); };
+      const b=await fileToBeleg(f); if(b) cb(b); };
   }
   function pickBeleg(cb, withoutOpt){
     belegInputs();
@@ -1504,6 +1638,7 @@ export function startApp(){
     const jOpts=jobs.map(a=>`<option value="${a.id}" ${d.auftragId===a.id?"selected":""}>#${esc(a.nr)} · ${esc(a.geraet||"Gerät")}${a.kundeId?" · "+esc(kName(a.kundeId)):""}</option>`).join("");
     openSheet(x?"Ausgabe":"Neue Ausgabe", `
       <div id="aPrev">${belegPreviewHtml(beleg)}</div>
+      <div class="ocrbar" id="aOcr" hidden aria-live="polite"></div>
       <div class="group"><span class="glabel">Beleg</span><div class="box">
         <div class="field"><label for="aLief">Lieferant / Händler</label><input id="aLief" list="aLiefList" placeholder="z. B. Mobilesentrix" value="${esc(d.lieferant)}" autocomplete="off"></div>
         <datalist id="aLiefList">${lief.map(l=>`<option value="${esc(l)}">`).join("")}</datalist>
@@ -1526,6 +1661,7 @@ export function startApp(){
         if(!lieferant){ toast("Bitte Lieferant / Händler eintragen"); $("#aLief").focus(); return false; }
         if(!(brutto>0)){ toast("Bitte den Bruttobetrag eintragen"); $("#aBrutto").focus(); return false; }
         const o={...d, lieferant, belegNr:val("aNr"), datum:val("aDatum")||today(), brutto:r2(brutto), satz:+d.satz, kategorie:val("aKat"), auftragId:val("aJob"), notiz:val("aNotiz")};
+        if(beleg && ocrText) o.ocrText=ocrText; else if(!beleg) delete o.ocrText;
         if(belegChanged){
           if(beleg){ o.bild=true; o.bildTyp=beleg.typ; o.bildName=beleg.name; o.bildLokal = mode==="db" && beleg.data.length>DB_IMG_MAX; }
           else { o.bild=false; delete o.bildTyp; delete o.bildName; delete o.bildLokal; }
@@ -1538,19 +1674,50 @@ export function startApp(){
     const split=()=>{ const c=aCalc({brutto:parseNum(val("aBrutto")), satz:d.satz});
       $("#aSplit").innerHTML = c.p ? `<span>Netto <b class="num">${eur(c.netto)}</b></span><span>${S.firma.kleinunternehmer?"darin MwSt.":"Vorsteuer"} <b class="num">${eur(c.vst)}</b></span>` : `<span>Ohne MwSt. – z. B. Porto, Privatverkauf, Kleinunternehmer</span>`; };
     split(); $("#aBrutto").oninput=split;
-    $$("#aSatz [data-satz]").forEach(b=>b.onclick=()=>{ d.satz=+b.dataset.satz; $$("#aSatz [data-satz]").forEach(z=>z.setAttribute("aria-pressed", z===b)); split(); });
+    const touched=new Set(); let ocrTok=0, ocrText=x?.ocrText||"";
+    const setSatz=p=>{ d.satz=p; $$("#aSatz [data-satz]").forEach(z=>z.setAttribute("aria-pressed", +z.dataset.satz===p)); split(); };
+    $$("#aSatz [data-satz]").forEach(b=>b.onclick=()=>{ touched.add("aSatz"); $("#aSatz").classList.remove("ocrok","ocrcheck"); setSatz(+b.dataset.satz); });
+    const mark=(id,cls)=>{ const f=id==="aSatz"?$("#aSatz"):$("#"+id)?.closest(".field"); if(!f) return; f.classList.remove("ocrok","ocrcheck"); if(cls) f.classList.add(cls); };
+    ["aLief","aDatum","aBrutto"].forEach(id=>{ const el=$("#"+id); const h=()=>{ touched.add(id); mark(id,null); }; el.addEventListener("input",h); el.addEventListener("change",h); });
+    const ocrBar=html=>{ const b=$("#aOcr"); if(!b) return; b.hidden=!html; b.innerHTML=html||""; };
+    const txtBtn=()=>ocrText?`<button type="button" class="linkbtn" id="aOcrShow">Erkannten Text zeigen</button>`:"";
+    const bindBar=b=>{ const sh=$("#aOcrShow"); if(sh) sh.onclick=()=>{ const pre=$("#aOcrTxt"); if(pre){ pre.remove(); sh.textContent="Erkannten Text zeigen"; } else { sh.insertAdjacentHTML("afterend", `<pre class="ocrtxt" id="aOcrTxt">${esc(ocrText)}</pre>`); sh.textContent="Text ausblenden"; } };
+      const re=$("#aOcrGo"); if(re) re.onclick=()=>{ touched.clear(); runOcr(b); }; };
+    const ocrIdle=b=>{ if(!b){ ocrBar(""); return; } ocrBar(`<div class="ocrrow idle">${ico.scan}<span><b>Beleg automatisch auslesen</b><small>Betrag, Datum und Händler vom Beleg übernehmen</small></span><button type="button" class="btn ghost sm" id="aOcrGo">Auslesen</button></div>${txtBtn()}`); bindBar(b); };
+    const runOcr=async b=>{
+      if(!b){ ocrTok++; ocrBar(""); return; }
+      const tok=++ocrTok, live=()=>tok===ocrTok && !!$("#aOcr");
+      ocrBar(`<div class="ocrrow run"><span class="ocrspin" aria-hidden="true"></span><span><b>Beleg wird ausgelesen …</b><small id="aOcrMsg">${b.typ==="application/pdf"?"PDF wird geöffnet":"Texterkennung wird gestartet"}</small></span><span class="ocrpct num" id="aOcrPct">0 %</span></div><div class="ocrprog"><i id="aOcrProg"></i></div><small class="ocrnote">Läuft auf Ihrem Gerät – Sie können währenddessen schon tippen.</small>`);
+      const prog=(p,msg)=>{ if(!live()) return; const pc=Math.max(0,Math.min(100,Math.round(p*100))); const a=$("#aOcrPct"), g=$("#aOcrProg"), m=$("#aOcrMsg"); if(a) a.textContent=pc+" %"; if(g) g.style.width=pc+"%"; if(msg&&m) m.textContent=msg; };
+      let res;
+      try{ res=await ocrBeleg(b, prog); }
+      catch(e){ if(!live()) return; ocrBar(`<div class="ocrrow err">${ico.scan}<span><b>Automatisches Auslesen nicht möglich</b><small>${navigator.onLine===false?"Keine Internetverbindung – die Texterkennung wird beim ersten Mal geladen.":"Die Texterkennung konnte nicht gestartet werden."} Bitte Betrag und Datum von Hand eintragen.</small></span><button type="button" class="btn ghost sm" id="aOcrGo">Nochmal</button></div>`); bindBar(b); return; }
+      if(!live()) return;
+      ocrText=(res.text||"").trim().slice(0,4000);
+      const r=ocrExtract(res.text, lief); const got=[]; let check=false;
+      if(r.betrag && !touched.has("aBrutto")){ $("#aBrutto").value=r.betrag.v.toFixed(2).replace(".",","); mark("aBrutto", r.betrag.sicher?"ocrok":"ocrcheck"); check ||= !r.betrag.sicher; got.push(`<b class="num">${eur(r.betrag.v)}</b>`); }
+      if(r.datum && !touched.has("aDatum")){ $("#aDatum").value=r.datum.iso; mark("aDatum", r.datum.sicher?"ocrok":"ocrcheck"); check ||= !r.datum.sicher; got.push(deDate(r.datum.iso)); }
+      if(r.lieferant && !touched.has("aLief") && !val("aLief")){ $("#aLief").value=r.lieferant; mark("aLief","ocrok"); got.push(esc(r.lieferant)); }
+      if(r.satz!=null && !touched.has("aSatz")){ setSatz(r.satz); mark("aSatz","ocrok"); got.push(`${r.satz} % MwSt.`); }
+      split();
+      const fehlt=[!r.betrag&&"Betrag", !r.datum&&"Datum"].filter(Boolean);
+      const ok=got.length>0;
+      ocrBar(`<div class="ocrrow ${ok?(check||fehlt.length?"warn":"ok"):"err"}">${ok?ico.check:ico.scan}<span><b>${ok?"Automatisch erkannt":"Nichts Eindeutiges erkannt"}</b><small>${ok?got.join(" · "):"Der Text war zu undeutlich."}${fehlt.length&&ok?` – ${fehlt.join(" und ")} bitte selbst eintragen`:""}${check?" – <u>gelb markierte</u> Werte bitte prüfen":""}${!ok?" Bitte von Hand eintragen.":""}</small></span><button type="button" class="btn ghost sm" id="aOcrGo">Neu lesen</button></div>${txtBtn()}`);
+      bindBar(b);
+    };
     const bindPrev=()=>{
       $("#aPrev").innerHTML=belegPreviewHtml(beleg);
-      const set=b=>{ beleg=b; belegChanged=true; bindPrev(); };
+      const set=b=>{ beleg=b; belegChanged=true; ocrText=""; bindPrev(); runOcr(b); };
       const add=$("#aAdd"); if(add) add.onclick=()=>pickBeleg(set);
       const rep=$("#aRep"); if(rep) rep.onclick=()=>pickBeleg(set);
       const op=$("#aOpen"); if(op) op.onclick=()=>showBeleg(beleg);
       const im=$("#aImg"); if(im) im.onclick=()=>showBeleg(beleg);
-      const db=$("#aDelB"); if(db) db.onclick=()=>{ beleg=null; belegChanged=true; bindPrev(); };
+      const db=$("#aDelB"); if(db) db.onclick=()=>{ beleg=null; belegChanged=true; ocrText=""; bindPrev(); runOcr(null); };
     };
     bindPrev();
+    if(belegChanged && beleg) runOcr(beleg);
     if(x?.bild && !belegChanged){ $("#aPrev").innerHTML=`<div class="bslot loading">${ico.doc}<small>Beleg wird geladen …</small></div>`;
-      BILD.get(x.id).then(b=>{ if(!$("#aPrev") || belegChanged) return; beleg=b; if(!b) $("#aPrev").innerHTML=`<div class="bslot">${ico.doc}<b>Beleg nicht auf diesem Gerät</b><small>${x.bildLokal?"Er wurde auf einem anderen Gerät erfasst (zu groß für die Synchronisierung).":"Er konnte nicht geladen werden."}</small></div>`; else bindPrev(); }); }
+      BILD.get(x.id).then(b=>{ if(!$("#aPrev") || belegChanged) return; beleg=b; if(!b) $("#aPrev").innerHTML=`<div class="bslot">${ico.doc}<b>Beleg nicht auf diesem Gerät</b><small>${x.bildLokal?"Er wurde auf einem anderen Gerät erfasst (zu groß für die Synchronisierung).":"Er konnte nicht geladen werden."}</small></div>`; else { bindPrev(); ocrIdle(b); } }); }
     const del=$("#aDel"); if(del) del.onclick=()=>confirmBox(`Ausgabe von ${esc(x.lieferant)} über ${eur(x.brutto)} löschen?`, ()=>{ remove("ausgaben",x.id); if(x.bild) BILD.del(x.id); closeSheet(); toast("Ausgabe gelöscht"); });
   }
 
