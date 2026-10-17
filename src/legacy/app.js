@@ -1478,9 +1478,8 @@ export function startApp(){
     return {text:await ocrRecognize(c, prog), quelle:"foto"};
   }
 
-  /* ---------- Beleg-Texterkennung: Betrag, Datum, MwSt., Händler aus OCR-Text ---------- */
+  /* ---------- Beleg-Texterkennung: Betrag, Datum, MwSt., Händler, Rechnungs-Nr. aus OCR-Text ---------- */
   const OCR_MON = {jan:1,januar:1,feb:2,februar:2,"mär":3,maer:3,mar:3,"märz":3,maerz:3,apr:4,april:4,mai:5,jun:6,juni:6,jul:7,juli:7,aug:8,august:8,sep:9,sept:9,september:9,okt:10,oktober:10,oct:10,nov:11,november:11,dez:12,dezember:12,dec:12};
-  const OCR_SHOPS = ["Amazon","DHL","Deutsche Post","Hermes","DPD","GLS","UPS","Hornbach","OBI","Bauhaus","Toom","Hagebau","Mobilesentrix","iFixit","Conrad","Reichelt","MediaMarkt","Media Markt","Saturn","Würth","Kaufland","Lidl","Aldi","Rewe","Edeka","Netto","Penny","dm","Rossmann","Müller","Aral","Shell","Esso","Jet","Total","Telekom","Vodafone","O2","Ikea","Staples","Otto","eBay","PayPal","Apple","Samsung","Ebay Kleinanzeigen"];
   function ocrClean(t){ return String(t||"").replace(/\r/g,"").replace(/[‚„]/g,",").replace(/[€]/g," € ").replace(/[ \t]+/g," "); }
   // Geldbeträge in einer Zeile: 1.234,56 | 1234,56 | 12.50 | 12, 50 | -12,50
   function ocrMoney(line){
@@ -1537,13 +1536,82 @@ export function startApp(){
     if(/§\s*19\s*ustg|ohne\s+(mwst|umsatzsteuer)|kleinunternehmer/.test(T)) return 0;
     return null;
   }
-  function ocrShop(text, known=[]){
-    const T=ocrClean(text); const low=T.toLowerCase();
-    const list=[...known, ...OCR_SHOPS].filter(Boolean);
-    const hit=list.map(n=>({n, i:low.search(new RegExp(`(^|[^a-zäöü])${n.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}([^a-zäöü]|$)`))})).filter(x=>x.i>=0).sort((a,b)=>a.i-b.i || b.n.length-a.n.length);
-    return hit.length ? hit[0].n : null;
+  /* Händler: Verkäufer > Briefkopf > bekannter Shop > Plattform */
+  const OCR_PLATFORMS = ["Amazon","eBay","Ebay Kleinanzeigen","Kleinanzeigen","AliExpress","Alibaba","PayPal","Etsy","Temu","Wish","Back Market","refurbed","Otto","Kaufland","Shopify","Klarna"];
+  const OCR_KNOWN = ["Dr. Smartphone","Mobilesentrix","iFixit","Conrad","Reichelt","Mouser","Digi-Key","DigiKey","Farnell","RS Components","Pollin","Völkner","Voelkner","Alternate","Cyberport","Notebooksbilliger","Mindfactory","Hornbach","OBI","Bauhaus","Toom","Hagebau","MediaMarkt","Media Markt","Saturn","Würth","Lidl","Aldi","Rewe","Edeka","Netto","Penny","Rossmann","Aral","Shell","Esso","Telekom","Vodafone","Ikea","Staples","Apple","Samsung","Deutsche Post","DHL","Hermes","DPD","GLS","UPS"];
+  const OCR_LEGAL = /\b(gmbh(?:\s*&\s*co\.?\s*kg)?|ag|ug(?:\s*\(haftungsbeschränkt\))?|e\.\s?k\.?|kg|ohg|gbr|ltd\.?|limited|inc\.?|llc|s\.?l\.?|b\.?v\.?|se|s\.?a\.?r\.?l\.?|co\.?,?\s*ltd\.?|corp\.?)(?![a-zäöü])/i;
+  const ocrNorm = s => String(s||"").toLowerCase().replace(/ä/g,"ae").replace(/ö/g,"oe").replace(/ü/g,"ue").replace(/ß/g,"ss").replace(/[^a-z0-9]/g,"");
+  function ocrHasName(line, name){
+    const n=ocrNorm(name); if(!n) return false;
+    if(n.length<=4) return new RegExp(`(^|[^a-z0-9äöü])${name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}([^a-z0-9äöü]|$)`,"i").test(line);
+    return ocrNorm(line).includes(n);
   }
-  function ocrExtract(text, known){ return { betrag:ocrAmount(text), datum:ocrDate(text), satz:ocrSatz(text), lieferant:ocrShop(text, known) }; }
+  function ocrCleanName(s){
+    s=String(s||"").replace(/^[\s:–\-•|*#]+/,"").split(/\s[|•·]\s|,\s(?!(?:ltd|inc|llc|kg|co)\b)|\s{2,}|\s[-–]\s(?=\D)|\(|\b(str\.|straße|strasse|weg|platz|allee)\b|\b\d{5}\b|tel\b|www\.|@/i)[0];
+    return s.replace(/[\s.:;,–\-]+$/,"").trim().slice(0,48);
+  }
+  function ocrShop(text, known=[], own=[]){
+    const L=ocrClean(text).split("\n").map(x=>x.trim()).filter(Boolean);
+    const isOwn = line => own.some(o=>o && ocrNorm(o).length>2 && ocrNorm(line).includes(ocrNorm(o)));
+    const isPlat = line => OCR_PLATFORMS.some(pl=>ocrHasName(line,pl));
+    const known2=[...known.filter(Boolean), ...OCR_KNOWN];
+    const knownIn = line => known2.filter(k=>ocrHasName(line,k)).sort((a,b)=>b.length-a.length)[0];
+    // 1. „Verkauft von …“ / „Verkäufer: …“ / „Sold by …“ – der eigentliche Händler hinter Amazon, eBay & Co.
+    for(let i=0;i<L.length;i++){
+      const m=L[i].match(/(?:verkauft\s+(?:und\s+versandt\s+)?von|verk[äa]ufer(?:in)?|anbieter|h[äa]ndler|sold\s+by|seller|vendor|shop|store)\s*[:\-]?\s*(.*)$/i);
+      if(!m || /^\s*(?:info|bewertung|nummer|nr|id|konto)/i.test(m[1])) continue;
+      let v=ocrCleanName(m[1]); if(!v || v.length<3) v=ocrCleanName(L[i+1]||"");
+      if(v && v.length>=3 && !isOwn(v) && !OCR_PLATFORMS.some(pl=>ocrNorm(pl)===ocrNorm(v))) return {name:knownIn(v)||v, quelle:"verkaeufer", sicher:true};
+    }
+    // 2. Briefkopf (erste Zeilen): bekannter Shop oder Zeile mit Rechtsform
+    const head=L.slice(0,7).filter(l=>!isOwn(l));
+    for(const l of head){ const k=knownIn(l); if(k && !isPlat(k)) return {name:k, quelle:"kopf", sicher:true}; }
+    for(const l of head){ if(OCR_LEGAL.test(l) && !isPlat(l) && !/rechnung|invoice|kunde|an:|lieferadresse|rechnungsadresse/i.test(l)){ const v=ocrCleanName(l); if(v.length>=3 && /[a-zäöü]{2}/i.test(v)) return {name:v, quelle:"kopf", sicher:false}; } }
+    // 3. bekannter Shop irgendwo (z. B. im Fuß oder als Web-Adresse)
+    for(const l of L){ if(isOwn(l)) continue; const k=knownIn(l); if(k) return {name:k, quelle:"bekannt", sicher:true}; }
+    // 3b. Rechtsform-Zeile weiter unten (Fußzeile mit Firmenangaben)
+    for(const l of L.slice(7)){ if(!isOwn(l) && OCR_LEGAL.test(l) && !isPlat(l) && !/rechnung|invoice|kunde|bank|iban|sitz|registergericht|amtsgericht|geschäftsführ/i.test(l)){ const v=ocrCleanName(l); if(v.length>=3) return {name:v, quelle:"fuss", sicher:false}; } }
+    // 4. nur die Plattform
+    for(const l of L){ const pl=OCR_PLATFORMS.find(x=>ocrHasName(l,x)); if(pl) return {name:pl, quelle:"plattform", sicher:false}; }
+    return null;
+  }
+  /* Rechnungsnummer */
+  const OCR_NR_KW = [
+    [/(?:rechnungs?|rg\.?)\s*[-‐]?\s*(?:nr|nummer|no|nº|n°)\b\.?/i, 10],
+    [/rechnung\s*(?:nr|nummer|no|n°)?\.?\s*[:#]/i, 9],
+    [/\binvoice\s*(?:no|nr|number|num|#|id)\b\.?|\binvoice\s*#/i, 10],
+    [/\binv\.?\s*(?:no|nr|#)|\binv\s*#/i, 9],
+    [/\bre\.?\s*[-‐]?\s*nr\b\.?/i, 9],
+    [/\b(?:beleg|bon|quittungs?|kassenbon|transaktions)\s*[-‐]?\s*(?:nr|nummer|no)\b\.?/i, 5],
+  ];
+  const OCR_NR_BAD = /(bestell|auftrags|kunden|steuer|ust|artikel|liefer(?:schein)?|sendungs|tracking|telefon|tel\b|konto|referenz|vertrags|mandats|order)/i;
+  function ocrNrToken(rest){
+    const t=String(rest||"").replace(/^[\s:#.\-–=]+/,"").match(/^([A-Za-z0-9][A-Za-z0-9\-\/._]{2,30})/);
+    if(!t) return null; let v=t[1].replace(/[._\-\/]+$/,"");
+    if(!/\d/.test(v) || /^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/.test(v) || v.length<3) return null;
+    v=v.replace(/(?<=\d)[oO](?=\d)/g,"0").replace(/(?<=\d)[lI|](?=\d)/g,"1");
+    return v;
+  }
+  function ocrInvoiceNr(text){
+    const L=ocrClean(text).split("\n").map(x=>x.trim()).filter(Boolean); const cand=[];
+    L.forEach((line,i)=>{
+      for(const [rx,score] of OCR_NR_KW){
+        const m=rx.exec(line); if(!m) continue;
+        const before=line.slice(Math.max(0,m.index-14), m.index);
+        if(OCR_NR_BAD.test(before+" "+m[0].replace(/rechnung|invoice/ig,""))) continue;
+        let v=ocrNrToken(line.slice(m.index+m[0].length));
+        if(!v && L[i+1]) v=ocrNrToken(L[i+1]);
+        if(v){ cand.push({v, s:score, i}); break; }
+      }
+      // Muster ohne Schlüsselwort: RE-2026-0042, RE2026123, INV-12345
+      const m2=line.match(/(?<![A-Za-z0-9])((?:RE|RG|INV|IN|R)[-‐ ]?\d{2,}(?:[-\/]\d+)*)(?![A-Za-z0-9])/);
+      if(m2 && !OCR_NR_BAD.test(line)) cand.push({v:m2[1].replace(/\s/g,"-").replace("‐","-"), s:6, i});
+    });
+    if(!cand.length) return null;
+    const best=cand.reduce((a,b)=>b.s>a.s||(b.s===a.s&&b.i<a.i)?b:a);
+    return {nr:best.v, sicher:best.s>=9};
+  }
+  function ocrExtract(text, known=[], own=[]){ return { betrag:ocrAmount(text), datum:ocrDate(text), satz:ocrSatz(text), lieferant:ocrShop(text, known, own), nr:ocrInvoiceNr(text) }; }
 
   /* ---------- Ausgaben & Beleg-Scan (Eingangsrechnungen) ---------- */
   const AKAT = ["Ersatzteile","Werkzeug","Porto/Versand","Verbrauchsmaterial","Büro & Software","Miete & Nebenkosten","Fahrzeug","Werbung","Sonstiges"];
@@ -1678,12 +1746,12 @@ export function startApp(){
     const setSatz=p=>{ d.satz=p; $$("#aSatz [data-satz]").forEach(z=>z.setAttribute("aria-pressed", +z.dataset.satz===p)); split(); };
     $$("#aSatz [data-satz]").forEach(b=>b.onclick=()=>{ touched.add("aSatz"); $("#aSatz").classList.remove("ocrok","ocrcheck"); setSatz(+b.dataset.satz); });
     const mark=(id,cls)=>{ const f=id==="aSatz"?$("#aSatz"):$("#"+id)?.closest(".field"); if(!f) return; f.classList.remove("ocrok","ocrcheck"); if(cls) f.classList.add(cls); };
-    ["aLief","aDatum","aBrutto"].forEach(id=>{ const el=$("#"+id); const h=()=>{ touched.add(id); mark(id,null); }; el.addEventListener("input",h); el.addEventListener("change",h); });
+    ["aLief","aDatum","aBrutto","aNr"].forEach(id=>{ const el=$("#"+id); const h=()=>{ touched.add(id); mark(id,null); }; el.addEventListener("input",h); el.addEventListener("change",h); });
     const ocrBar=html=>{ const b=$("#aOcr"); if(!b) return; b.hidden=!html; b.innerHTML=html||""; };
     const txtBtn=()=>ocrText?`<button type="button" class="linkbtn" id="aOcrShow">Erkannten Text zeigen</button>`:"";
     const bindBar=b=>{ const sh=$("#aOcrShow"); if(sh) sh.onclick=()=>{ const pre=$("#aOcrTxt"); if(pre){ pre.remove(); sh.textContent="Erkannten Text zeigen"; } else { sh.insertAdjacentHTML("afterend", `<pre class="ocrtxt" id="aOcrTxt">${esc(ocrText)}</pre>`); sh.textContent="Text ausblenden"; } };
       const re=$("#aOcrGo"); if(re) re.onclick=()=>{ touched.clear(); runOcr(b); }; };
-    const ocrIdle=b=>{ if(!b){ ocrBar(""); return; } ocrBar(`<div class="ocrrow idle">${ico.scan}<span><b>Beleg automatisch auslesen</b><small>Betrag, Datum und Händler vom Beleg übernehmen</small></span><button type="button" class="btn ghost sm" id="aOcrGo">Auslesen</button></div>${txtBtn()}`); bindBar(b); };
+    const ocrIdle=b=>{ if(!b){ ocrBar(""); return; } ocrBar(`<div class="ocrrow idle">${ico.scan}<span><b>Beleg automatisch auslesen</b><small>Betrag, Datum, Händler und Rechnungs-Nr. vom Beleg übernehmen</small></span><button type="button" class="btn ghost sm" id="aOcrGo">Auslesen</button></div>${txtBtn()}`); bindBar(b); };
     const runOcr=async b=>{
       if(!b){ ocrTok++; ocrBar(""); return; }
       const tok=++ocrTok, live=()=>tok===ocrTok && !!$("#aOcr");
@@ -1694,10 +1762,11 @@ export function startApp(){
       catch(e){ if(!live()) return; ocrBar(`<div class="ocrrow err">${ico.scan}<span><b>Automatisches Auslesen nicht möglich</b><small>${navigator.onLine===false?"Keine Internetverbindung – die Texterkennung wird beim ersten Mal geladen.":"Die Texterkennung konnte nicht gestartet werden."} Bitte Betrag und Datum von Hand eintragen.</small></span><button type="button" class="btn ghost sm" id="aOcrGo">Nochmal</button></div>`); bindBar(b); return; }
       if(!live()) return;
       ocrText=(res.text||"").trim().slice(0,4000);
-      const r=ocrExtract(res.text, lief); const got=[]; let check=false;
+      const r=ocrExtract(res.text, lief, [S.firma.name, S.firma.ansprechpartner, "RepairMobile"]); const got=[]; let check=false;
       if(r.betrag && !touched.has("aBrutto")){ $("#aBrutto").value=r.betrag.v.toFixed(2).replace(".",","); mark("aBrutto", r.betrag.sicher?"ocrok":"ocrcheck"); check ||= !r.betrag.sicher; got.push(`<b class="num">${eur(r.betrag.v)}</b>`); }
       if(r.datum && !touched.has("aDatum")){ $("#aDatum").value=r.datum.iso; mark("aDatum", r.datum.sicher?"ocrok":"ocrcheck"); check ||= !r.datum.sicher; got.push(deDate(r.datum.iso)); }
-      if(r.lieferant && !touched.has("aLief") && !val("aLief")){ $("#aLief").value=r.lieferant; mark("aLief","ocrok"); got.push(esc(r.lieferant)); }
+      if(r.lieferant && !touched.has("aLief") && !val("aLief")){ $("#aLief").value=r.lieferant.name; mark("aLief", r.lieferant.sicher?"ocrok":"ocrcheck"); check ||= !r.lieferant.sicher; got.push(esc(r.lieferant.name)+(r.lieferant.quelle==="verkaeufer"?" <small>(Verkäufer)</small>":"")); }
+      if(r.nr && !touched.has("aNr") && !val("aNr")){ $("#aNr").value=r.nr.nr; mark("aNr", r.nr.sicher?"ocrok":"ocrcheck"); check ||= !r.nr.sicher; got.push(`Nr. <span class="mono">${esc(r.nr.nr)}</span>`); }
       if(r.satz!=null && !touched.has("aSatz")){ setSatz(r.satz); mark("aSatz","ocrok"); got.push(`${r.satz} % MwSt.`); }
       split();
       const fehlt=[!r.betrag&&"Betrag", !r.datum&&"Datum"].filter(Boolean);
