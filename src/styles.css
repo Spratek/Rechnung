@@ -338,6 +338,16 @@ textarea.input{resize:vertical;line-height:1.45}
 .field.ocrcheck{background:var(--amber-soft)}
 .field.ocrok input,.field.ocrcheck input{font-weight:700}
 .field.ocrcheck label::after{content:"prüfen";margin-left:6px;font-size:11px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.04em}
+.kibadge{font-style:normal;font-size:10.5px;font-weight:800;letter-spacing:.06em;padding:1px 6px;border-radius:999px;background:linear-gradient(135deg,#6d5dfc,#29aae1);color:#fff;vertical-align:2px;margin-left:4px}
+.ocrrow.ki .ocrspin{border-top-color:#6d5dfc}
+.ocrprog.indet i{width:35%;background:linear-gradient(90deg,#6d5dfc,#29aae1);animation:kiSlide 1.1s ease-in-out infinite}
+@keyframes kiSlide{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}
+.ocrnote.kiwarn{color:var(--amber)}
+.eyebtn{flex:none;border:0;background:none;color:var(--muted);padding:8px 0 8px 6px;display:grid;place-items:center}
+.eyebtn svg{width:20px;height:20px}
+.field.gemtest{gap:12px;justify-content:flex-start}
+#cGemRes{font-size:13.5px;color:var(--muted);flex:1;min-width:0;text-align:left}
+#cGemRes.good{color:var(--green);font-weight:600} #cGemRes.bad{color:var(--red);font-weight:600}
 .seg.ocrok{box-shadow:0 0 0 2px color-mix(in srgb,var(--hi) 45%,transparent)}
 .kuhint svg{width:18px;height:18px;flex:none;margin-top:1px;color:var(--blue)}
 .kuhint i{font-style:normal;color:var(--muted)}
